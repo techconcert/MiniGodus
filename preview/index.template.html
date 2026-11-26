@@ -1,0 +1,388 @@
+<title>MiniGodus Clock Preview</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: device on the left, bench controls on the right; stacks on phones. */
+:root {
+  --bg: #eef0f3;
+  --panel: #ffffff;
+  --ink: #1b1f27;
+  --muted: #5d6573;
+  --line: #d6dae1;
+  --accent: #c9781a;
+  --device: #2a2d33;
+  --device-edge: #15171b;
+  --ok: #2f8a4c;
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14171c; --panel: #1d2128; --ink: #e8eaee; --muted: #9aa2af; --line: #2e333c;
+    --accent: #e89a3c; --device: #34383f; --device-edge: #0b0c0e; --ok: #5cc27d; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14171c; --panel: #1d2128; --ink: #e8eaee; --muted: #9aa2af; --line: #2e333c;
+  --accent: #e89a3c; --device: #34383f; --device-edge: #0b0c0e; --ok: #5cc27d; color-scheme: dark;
+}
+body { background: var(--bg); color: var(--ink); font-family: var(--font-body); }
+.wrap {
+  max-width: 1040px; margin: 0 auto;
+  padding-block: 28px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 24px;
+}
+header h1 { font-family: var(--font-display); font-size: 1.75rem; margin: 0; text-wrap: balance; }
+header p { margin: 6px 0 0; color: var(--muted); max-width: 62ch; line-height: 1.5; }
+.bench { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
+@media (max-width: 820px) { .bench { grid-template-columns: minmax(0, 1fr); } }
+.device {
+  justify-self: center; width: 100%; max-width: 540px;
+  background: linear-gradient(160deg, var(--device), var(--device-edge));
+  border-radius: 22px; padding: 30px 30px 44px;
+  box-shadow: 0 18px 40px rgba(0,0,0,.25);
+}
+.screen { position: relative; width: 100%; aspect-ratio: 1; max-width: 100%; background: #000; border-radius: 4px; overflow: hidden; }
+.screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; image-rendering: pixelated; image-rendering: crisp-edges; }
+.device .label { margin-top: 14px; text-align: center; font-family: var(--font-mono); font-size: .7rem; letter-spacing: .18em; color: #8b9099; text-transform: uppercase; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; display: grid; gap: 18px; min-width: 0; }
+.group { display: grid; gap: 8px; }
+.group h2 { margin: 0; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
+button, select, input[type=range] { font: inherit; }
+.seg button {
+  border: 1px solid var(--line); background: transparent; color: var(--ink);
+  padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: .9rem;
+}
+.seg button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #1b1f27; font-weight: 600; }
+.seg button:disabled { opacity: .45; cursor: not-allowed; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.row { display: flex; align-items: center; gap: 10px; }
+.row input[type=range] { flex: 1; min-width: 0; accent-color: var(--accent); }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+dl.stats { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0; font-size: .88rem; }
+dl.stats dt { color: var(--muted); }
+dl.stats dd { margin: 0; text-align: right; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.note { font-size: .8rem; color: var(--muted); line-height: 1.5; margin: 0; }
+label.check { display: flex; gap: 8px; align-items: center; font-size: .9rem; cursor: pointer; }
+.seg button.small { padding: 4px 9px; font-size: .82rem; }
+.seg input, .seg select, textarea {
+  font: inherit; font-size: .85rem; color: var(--ink); background: transparent;
+  border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; min-width: 0;
+}
+.seg input[type=number] { width: 5.5em; }
+textarea { width: 100%; box-sizing: border-box; height: 5.2em; font-family: var(--font-mono); font-size: .72rem; resize: vertical; }
+.panel details { border-top: 1px solid var(--line); padding-top: 12px; }
+.panel details > summary { cursor: pointer; font-size: .72rem; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); font-weight: 600; margin-bottom: 10px; }
+.panel details[open] { display: grid; gap: 22px; }
+.badge { display: inline-block; font-family: var(--font-mono); font-size: .72rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--ok); color: var(--ok); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>MiniGodus clock preview</h1>
+    <p>This runs the exact game code that goes on the clock, compiled for the browser. What you see on the 240&times;240 screen is what the ST7789 will show, strip for strip. Timing and WiFi are simulated.</p>
+  </header>
+
+  <div class="bench">
+    <div class="device">
+      <div class="screen"><canvas id="lcd" width="240" height="240"></canvas><canvas id="overlay" width="240" height="240"></canvas></div>
+      <div class="label">ESP8266 &middot; ST7789 240&times;240 &middot; RGB565</div>
+    </div>
+
+    <div class="panel">
+      <div class="group">
+        <h2>Scene</h2>
+        <div class="seg" id="scene">
+          <button id="scene-village" data-v="1" aria-pressed="true">MiniGodus</button>
+          <button id="scene-test" data-v="0" aria-pressed="false">Hardware test</button>
+        </div>
+      </div>
+      <div class="group">
+        <h2>Time scale</h2>
+        <div class="seg" id="speed">
+          <button id="speed-0" data-v="0" aria-pressed="false">Pause</button>
+          <button id="speed-1" data-v="1" aria-pressed="true">1&times;</button>
+          <button id="speed-10" data-v="10" aria-pressed="false">10&times;</button>
+          <button id="speed-60" data-v="60" aria-pressed="false">60&times;</button>
+          <button id="speed-600" data-v="600" aria-pressed="false">600&times;</button>
+        </div>
+        <p class="note">At 1&times; the clock follows this computer's time if the box below is ticked. Faster speeds run a simulated clock.</p>
+      </div>
+      <div class="group">
+        <h2>Clock time</h2>
+        <div class="row">
+          <input id="time" type="range" min="0" max="1439" step="1" value="600">
+          <span id="time-label" class="mono">10:00</span>
+        </div>
+        <label class="check"><input id="time-live" type="checkbox" checked> Use this computer's time</label>
+      </div>
+      <div class="group">
+        <h2>Colour depth</h2>
+        <div class="row">
+          <input id="depth" type="range" min="0" max="100" step="5" value="40">
+          <span id="depth-label" class="mono">40</span>
+        </div>
+        <p class="note">Matches the setting on the clock's status page. Higher darkens mid-tones.</p>
+      </div>
+      <details id="debug" open>
+        <summary>Debug</summary>
+        <div class="group">
+          <h2>World day</h2>
+          <div class="seg">
+            <input id="day-n" type="number" min="0" max="65535" value="0" aria-label="World day (0 is the first day)">
+            <button class="small" id="day-go" type="button">Jump to day</button>
+            <button class="small" id="day-next" type="button">Next day</button>
+          </div>
+        </div>
+        <div class="group">
+          <h2>Environment</h2>
+          <div class="seg">
+            <label class="check"><input id="wifi-down" type="checkbox"> WiFi down</label>
+            <label class="check"><input id="clock-approx" type="checkbox"> Clock approximate</label>
+          </div>
+        </div>
+        <div class="group">
+          <h2>Live weather and sleep</h2>
+          <div class="seg">
+            <select id="lw-wx" aria-label="Live weather">
+              <option value="-1">No live weather</option>
+              <option value="0">Clear</option><option value="1">Cloudy</option><option value="2">Rain</option>
+              <option value="3">Storm</option><option value="4">Fog</option><option value="5">Snow</option><option value="6">Windy</option>
+            </select>
+            <input id="lw-temp" type="number" min="-99.9" max="99.9" step="0.1" value="23" aria-label="Temperature in Celsius" style="width:5.5em">
+            <label class="check"><input id="lw-f" type="checkbox"> Fahrenheit</label>
+            <label class="check"><input id="lw-night" type="checkbox"> Night</label>
+            <label class="check"><input id="lw-stale" type="checkbox"> Stale</label>
+          </div>
+          <div class="seg">
+            <select id="sleep-mode" aria-label="Sleep mode">
+              <option value="0" selected>Sleep: built-in night</option>
+              <option value="1">Sleep: stay up</option>
+              <option value="2">Sleep: go to bed</option>
+            </select>
+          </div>
+        </div>
+        <div class="group">
+          <h2>Restart</h2>
+          <div class="seg">
+            <button class="small" id="restart" type="button">Simulate restart</button>
+          </div>
+          <p class="note">The preview does not save the world: a restart starts a new one.</p>
+        </div>
+        <div class="group">
+          <h2>Live values</h2>
+          <dl class="stats" id="readout"></dl>
+        </div>
+      </details>
+      <div class="group">
+        <h2>Display bus</h2>
+        <label class="check"><input id="show-dirty" type="checkbox"> Highlight strips sent this frame</label>
+        <dl class="stats">
+          <dt>Strips sent / frame</dt><dd id="st-strips">0.0</dd>
+          <dt>Bytes / frame</dt><dd id="st-bytes">0</dd>
+          <dt>Est. clock FPS</dt><dd id="st-fps">0</dd>
+        </dl>
+        <p class="note">Estimate: each 240&times;16 strip is 7,680 bytes, about 1.5&nbsp;ms on 40&nbsp;MHz SPI plus about 1.3&nbsp;ms to draw on a 160&nbsp;MHz ESP8266. Only changed strips are sent.</p>
+      </div>
+      <div class="group">
+        <h2>Build</h2>
+        <p class="note"><span class="badge">same code as firmware</span> Core <span class="mono" id="wasm-size"></span></p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const WASM_B64 = "__WASM_BASE64__";
+  const lcd = document.getElementById("lcd").getContext("2d");
+  const ov = document.getElementById("overlay").getContext("2d");
+  const img = lcd.createImageData(240, 240);
+  const $ = (id) => document.getElementById(id);
+
+  const bytes = Uint8Array.from(atob(WASM_B64), c => c.charCodeAt(0));
+  $("wasm-size").textContent = (bytes.length / 1024).toFixed(1) + " KB wasm";
+
+  let ex, mem, scene = 0, speed = 1, last = performance.now();
+  let stripHist = [], flash = new Array(15).fill(0);
+
+  function setStatus(line, text) {
+    const buf = new Uint8Array(mem.buffer, ex.text_ptr(), 64);
+    const enc = new TextEncoder().encode(text.slice(0, 31));
+    buf.fill(0); buf.set(enc);
+    ex.set_status(line);
+  }
+
+  function start(sc) {
+    scene = sc;
+    ex.init(sc, 12345);
+    setStatus(0, "IP 192.168.1.50");
+    setStatus(1, "");
+    setStatus(2, "PREVIEW BUILD");
+    setStatus(3, "");
+    startDay = null; lastDate = "";
+    ex.set_net($("wifi-down").checked ? 1 : 0);
+    ex.clock_quality($("clock-approx").checked ? 1 : 0);
+    applyR3();
+    ex.set_depth(+$("depth").value);
+  }
+
+  // R3 controls: options survive the game restart in the core, so they are simply applied again.
+  function applyR3() {
+    const t = Math.round(parseFloat($("lw-temp").value) * 10) || 0;
+    const fl = ($("lw-f").checked ? 1 : 0) | ($("lw-night").checked ? 2 : 0) | ($("lw-stale").checked ? 4 : 0);
+    ex.set_live_weather(+$("lw-wx").value, t, fl);
+    ex.set_option(2, +$("sleep-mode").value);
+  }
+
+  function blit(strip) {
+    ex.render(strip);
+    const px = new Uint16Array(mem.buffer, ex.strip_ptr(), 240 * 16);
+    const d = img.data;
+    let o = strip * 240 * 16 * 4;
+    for (let i = 0; i < px.length; i++) {
+      const c = px[i];
+      const r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;
+      d[o++] = (r << 3) | (r >> 2);
+      d[o++] = (g << 2) | (g >> 4);
+      d[o++] = (b << 3) | (b >> 2);
+      d[o++] = 255;
+    }
+  }
+
+  // ---- clock: real time at 1x when ticked, otherwise a simulated clock that follows the time scale
+  let vmin = 600;                      // simulated minute of day (fractional)
+  function realMinutes() { const n = new Date(); return n.getHours() * 60 + n.getMinutes() + n.getSeconds() / 60; }
+  function useReal() { return $("time-live").checked && speed === 1; }
+  const pad2 = (n) => String(n).padStart(2, "0");
+
+  // gc_set_date: the date follows the game day, starting from today
+  const day0 = Date.now();
+  let startDay = null, lastDate = "";
+  function syncDate() {
+    const day = ex.query(Q.DAY);
+    if (startDay === null) startDay = day;
+    const d = new Date(day0 + (day - startDay) * 86400000);
+    const key = d.toDateString();
+    if (key !== lastDate) { lastDate = key; ex.set_date(d.getFullYear(), d.getMonth() + 1, d.getDate(), d.getDay()); }
+  }
+
+  let fpsAcc = 0, fpsFrames = 0, roAcc = 0;
+  function frame(now) {
+    const dt = Math.min(250, now - last);
+    last = now;
+    if (speed > 0) {
+      const total = dt * speed, n = Math.min(80, Math.max(1, Math.ceil(total / 250)));
+      if (!useReal()) vmin = (vmin + total / 60000) % 1440;
+      for (let i = 0; i < n; i++) ex.tick(Math.min(250, total / n));
+    }
+    const m = Math.floor(useReal() ? realMinutes() : vmin) % 1440;
+    ex.set_clock(Math.floor(m / 60), m % 60, 1);
+    $("time-label").textContent = pad2(Math.floor(m / 60)) + ":" + pad2(m % 60);
+    if (scene === 1) syncDate();
+
+    const mask = ex.dirty();
+    let n = 0;
+    for (let s = 0; s < 15; s++) if (mask & (1 << s)) { blit(s); n++; flash[s] = 6; }
+    ex.clear_dirty();
+    if (n) lcd.putImageData(img, 0, 0);
+
+    stripHist.push(n); if (stripHist.length > 60) stripHist.shift();
+    const avg = stripHist.reduce((a, b) => a + b, 0) / stripHist.length;
+    const ms = Math.max(4, avg * 2.8 + 2);
+    const est = Math.min(60, 1000 / ms);
+    fpsAcc += dt; fpsFrames++;
+    if (fpsAcc > 500) {
+      $("st-strips").textContent = avg.toFixed(1);
+      $("st-bytes").textContent = Math.round(avg * 7680).toLocaleString();
+      $("st-fps").textContent = est.toFixed(0);
+      ex.set_fps(Math.round(est * 10));
+      fpsAcc = 0; fpsFrames = 0;
+    }
+    roAcc += dt;
+    if (roAcc > 400) { roAcc = 0; readout(); }
+
+    ov.clearRect(0, 0, 240, 240);
+    if ($("show-dirty").checked) {
+      for (let s = 0; s < 15; s++) if (flash[s] > 0) {
+        ov.fillStyle = `rgba(232,154,60,${0.08 * flash[s]})`;
+        ov.fillRect(0, s * 16, 240, 16);
+        flash[s]--;
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // ---- debug panel: everything goes through gc_debug and gc_query (keys and commands: lib/gamecore/src/gq_types.h)
+  const Q = {};
+  ["DAY", "MINUTE", "WEATHER", "HERO_ACT", "HERO_ABED", "LIVE_WX", "LIVE_TEMP", "LIVE_FLAGS", "SLEEP_MODE", "SHAMAN_X", "SHAMAN_Y", "SEED"].forEach((k, i) => { Q[k] = i; });
+  const DBG = { SET_DAY: 0, NEXT_DAY: 1, FORCE_ACT: 2 };
+  const NAMES = {
+    WEATHER: ["clear", "cloudy", "rain", "storm", "fog", "snow", "windy"],
+    HERO_ACT: ["none", "wander", "asleep"],
+  };
+  const READ = ["DAY", "MINUTE", "WEATHER", "HERO_ACT", "HERO_ABED", "LIVE_WX", "LIVE_TEMP", "SLEEP_MODE", "SHAMAN_X", "SHAMAN_Y", "SEED"];
+  const ro = $("readout");
+  const roCells = {};
+  READ.forEach((k) => {
+    const dt = document.createElement("dt"), dd = document.createElement("dd");
+    dt.textContent = k.toLowerCase().replace(/_/g, " ");
+    ro.append(dt, dd);
+    roCells[k] = dd;
+  });
+  function pressed(group, v) {
+    document.querySelectorAll("#" + group + " button").forEach((b) => b.setAttribute("aria-pressed", +b.dataset.v === v ? "true" : "false"));
+  }
+  function readout() {
+    if (scene !== 1) return;
+    for (const k of READ) {
+      let v = ex.query(Q[k]);
+      if (k === "MINUTE") v = pad2(Math.floor(v / 60)) + ":" + pad2(v % 60);
+      else if (NAMES[k]) v = (NAMES[k][v] !== undefined ? NAMES[k][v] : v) + " (" + v + ")";
+      roCells[k].textContent = v;
+    }
+    if (document.activeElement !== $("day-n")) $("day-n").value = ex.query(Q.DAY);
+  }
+  const dbg = (cmd, arg) => { ex.debug(cmd, arg | 0); readout(); };
+  function dayBase() { return Math.floor(ex.query(Q.DAY) / 28) * 28; }
+  function setClockTo(min) { $("time-live").checked = false; vmin = min; $("time").value = min; }
+
+  function wireDebug() {
+    $("day-go").addEventListener("click", () => dbg(DBG.SET_DAY, Math.max(0, Math.min(65535, +$("day-n").value || 0))));
+    $("day-next").addEventListener("click", () => dbg(DBG.NEXT_DAY, 0));
+    $("wifi-down").addEventListener("change", () => ex.set_net($("wifi-down").checked ? 1 : 0));
+    $("clock-approx").addEventListener("change", () => ex.clock_quality($("clock-approx").checked ? 1 : 0));
+    $("restart").addEventListener("click", () => start(scene));
+    ["lw-wx", "lw-temp", "lw-f", "lw-night", "lw-stale", "sleep-mode"].forEach((id) => $(id).addEventListener("change", applyR3));
+    // the live reading is a once-a-second input in the firmware; keep feeding it so a reset game sees it too
+    setInterval(() => { if (scene === 1) applyR3(); }, 1000);
+  }
+  function seg(groupId, onPick) {
+    const g = $(groupId);
+    g.addEventListener("click", (e) => {
+      const b = e.target.closest("button");
+      if (!b || b.disabled) return;
+      g.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b ? "true" : "false"));
+      onPick(+b.dataset.v);
+    });
+  }
+  seg("scene", (v) => start(v));
+  seg("speed", (v) => { if (v !== 1 && useReal()) vmin = realMinutes(); speed = v; });
+  $("time").addEventListener("input", () => { $("time-live").checked = false; vmin = +$("time").value; });
+  $("time-live").addEventListener("change", () => { if (!$("time-live").checked) vmin = realMinutes(); });
+  $("depth").addEventListener("input", () => { $("depth-label").textContent = $("depth").value; ex.set_depth(+$("depth").value); });
+
+  WebAssembly.instantiate(bytes, {}).then(({ instance }) => {
+    ex = instance.exports; mem = ex.memory;
+    wireDebug();
+    start(1);
+    ex.set_depth(+$("depth").value);
+    requestAnimationFrame(frame);
+  });
+})();
+</script>

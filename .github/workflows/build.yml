@@ -1,0 +1,200 @@
+name: build
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core:
+    name: Game core tests + browser preview
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Regenerate assets and make sure they are committed
+        run: |
+          pip install pillow
+          python tools/png2tiles.py
+          git diff --exit-code lib/gamecore/src/assets_gen.h || (echo "assets_gen.h is stale: run python tools/png2tiles.py and commit" && exit 1)
+      # RECOVERY-CHANGE (chunk1): gates G4 and G5 (design 13.3). They need only Python.
+      - name: Recovery lint (G4) and its self-test
+        run: |
+          python3 tools/lint_safety.py
+          python3 tools/lint_safety.py --selftest
+      - name: check_bin self-test (G5)
+        run: python3 tools/check_bin_selftest.py
+      # RECOVERY-CHANGE (R3-0F): the R3 module headers are the interface between parallel chunks; they must stay free of Arduino and compile alone
+      - name: R3 module headers compile on the host
+        run: |
+          for h in firmware/config.h firmware/wxnet.h firmware/nightmode.h lib/gqsafe/src/gqconf.h; do
+            echo "=== $h"
+            echo "#include \"$h\"" | g++ -std=c++17 -fsyntax-only -Wall -Wextra -Werror -I. -Ifirmware -Ilib/gqsafe/src -x c++ -
+          done
+      - name: Python tests (every test/*.py)
+        run: |
+          shopt -s nullglob
+          for t in test/*.py; do echo "=== $t"; python3 "$t"; done
+      - name: Config page gzip matches its source
+        run: python3 tools/gen_config_gz.py --verify
+      - name: Host tests (ASan/UBSan, one executable per test/test_*.cpp and core_smoke.cpp)
+        run: |
+          set -e
+          shopt -s nullglob
+          for t in test/*.cpp; do
+            n=$(basename "$t" .cpp)
+            echo "=== $n"
+            g++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror \
+              -o "$n" "$t" lib/gamecore/src/*.cpp lib/gqsafe/src/*.cpp
+            ./"$n"
+          done
+      - name: Build browser preview
+        run: |
+          # the runner image usually has clang and lld already; the package mirror is sometimes unreachable
+          if ! (command -v clang && command -v wasm-ld); then
+            for i in 1 2 3 4; do
+              (sudo apt-get update -qq && sudo apt-get install -y -qq clang lld) && break
+              sleep 20
+            done
+          fi
+          ./tools/build_preview.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiniGodus-preview
+          path: preview/dist/index.html
+
+  # RECOVERY-CHANGE (chunk1): gate G8, recovery-change guard (design 8.10 rule 6)
+  guard:
+    name: Recovery-change guard
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: RECOVERY-CHANGE line and GQ_RECOVERY_REV bump when a recovery-contract file changed
+        run: |
+          set -e
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            BASE="${{ github.event.before }}"
+          else
+            git fetch origin main --quiet || true
+            BASE=$(git merge-base origin/main HEAD 2>/dev/null || echo 0000000000000000000000000000000000000000)
+          fi
+          echo "base: $BASE"
+          python3 tools/recovery_guard.py "$BASE" HEAD
+
+  firmware:
+    name: Firmware (.bin with recovery checks)
+    runs-on: ubuntu-24.04
+    # runs in parallel with the host tests so compile errors show up in minutes; publishing still waits for both
+    needs: guard
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ hashFiles('platformio.ini') }}
+      - run: pip install platformio
+      - name: Build all environments
+        run: pio run -e test -e quest
+      # RECOVERY-CHANGE (chunk1): gate G7 with the ELF (symbols, linker layout, RAM); the toolchain comes with PlatformIO
+      - name: Recovery safety check (again, explicitly)
+        run: python tools/check_bin.py --require-elf dist/*.bin
+      # RECOVERY-CHANGE (R3-0F): the R3 plan keeps every image under 470 KB (addendum item 5); check_bin warns from 440 KB and fails at 500 KB
+      - name: R3 size cap (images under 470 KB)
+        run: |
+          for f in dist/*.bin; do
+            n=$(stat -c %s "$f"); echo "$f $n bytes"
+            [ "$n" -lt $((470 * 1024)) ] || { echo "image is over the R3 cap of 470 KB"; exit 1; }
+          done
+      - name: Link flags (was -u _printf_float removed?) and the biggest symbols
+        run: |
+          for e in dist/*.elf; do
+            echo "== $e"
+            ~/.platformio/packages/toolchain-xtensa*/bin/xtensa-lx106-elf-size -A "$e" | grep -E "^\.(irom0\.text|text|data|rodata|bss) "
+            ~/.platformio/packages/toolchain-xtensa*/bin/xtensa-lx106-elf-nm -S --size-sort -C "$e" | tail -25
+            ~/.platformio/packages/toolchain-xtensa*/bin/xtensa-lx106-elf-nm "$e" | grep -cE "_printf_float|_strtod_l|_dtoa_r|MDNSResponder" || true
+          done
+      - name: Size report (G9)
+        run: |
+          ls -l dist/
+          git fetch origin builds --depth 1 --quiet || true
+          python tools/size_report.py dist/*.bin
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiniGodus-firmware
+          path: dist/*.bin
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MiniGodus-elf
+          path: dist/*.elf
+          if-no-files-found: error
+
+  publish:
+    name: Publish to the builds branch
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    needs: [core, guard, firmware]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4          # for the VERSION file (release name)
+      - uses: actions/download-artifact@v4
+        with:
+          path: out
+      - name: Commit .bin files and preview to the builds branch
+        run: |
+          set -e
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@users.noreply.github.com"
+          git clone --depth 1 --branch builds "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}" site \
+            || (mkdir site && cd site && git init -b builds && git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}")
+          cd site
+          mkdir -p firmware/obsolete elf
+          # everything from earlier builds goes to firmware/obsolete so only current files sit in firmware/
+          for f in firmware/*.bin; do [ -e "$f" ] && git mv -f "$f" firmware/obsolete/ 2>/dev/null || mv -f "$f" firmware/obsolete/ 2>/dev/null || true; done
+          rm -f elf/*.elf
+          cp ../out/MiniGodus-firmware/*.bin firmware/
+          cp ../out/MiniGodus-elf/*.elf elf/
+          cp ../out/MiniGodus-preview/index.html preview.html
+          ls firmware/*.bin | sort | sed 's|firmware/||' > firmware/INDEX.txt
+          echo "Flash only the files listed here. Files in firmware/obsolete are old." >> firmware/INDEX.txt
+          printf "Latest build: %s\nCommit: %s\n" "$(date -u +%FT%TZ)" "${{ github.sha }}" > LATEST.txt
+          # R7: the update page in the owner's browser reads this file to offer "new version available"
+          QBIN=$(ls firmware/SDP_MiniGodus_quest_*.bin | head -1)
+          printf '{"version":"%s","commit":"%s","bin":"%s"}\n' "$(tr -d ' \r\n' < ../VERSION)" "$(echo "${{ github.sha }}" | cut -c1-7)" "$QBIN" > latest.json
+          git add -A
+          git commit -m "Build ${{ github.sha }}" || echo "nothing to commit"
+          git push origin builds
+      # R2: a GitHub Release with the two firmware files, the browser preview and checksums (the download page for the owner).
+      # Uses the built-in GITHUB_TOKEN (permissions: contents: write above). Older releases are left alone.
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          SHORT=$(echo "${{ github.sha }}" | cut -c1-7)
+          REL=$(tr -d ' \r\n' < VERSION)
+          TAG="r$REL"
+          mkdir -p rel
+          cp out/MiniGodus-firmware/*.bin rel/
+          cp out/MiniGodus-preview/index.html rel/preview.html
+          (cd rel && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          NOTES="MiniGodus r$REL, build $SHORT (commit ${{ github.sha }}).
+
+          $(cat RELEASE-NOTES.md)
+
+          Flash SDP_MiniGodus_quest_*.bin (the game) on the clock's update page (http://<clock IP>/update, or http://192.168.4.1/update on the MINIGODUS-XXXX rescue network). SDP_MiniGodus_test_*.bin is the display test build. Check the SHA256 sums in SHA256SUMS.txt. Read docs/RECOVERY.md before installing."
+          # A later push of the same release number replaces the release, so the page always holds the newest files.
+          if gh release view "$TAG" >/dev/null 2>&1; then gh release delete "$TAG" --cleanup-tag -y; fi
+          gh release create "$TAG" rel/* --target "${{ github.sha }}" --title "MiniGodus r$REL" --notes "$NOTES" --latest

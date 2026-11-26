@@ -1,0 +1,72 @@
+// Shared types of the MiniGodus game core: ids, query keys and the saved state.
+// The saved layout is versioned by MG_SAVE_VERSION; the magic is MiniGodus' own (GeekQuest uses a different one in the
+// same flash area, so switching firmware between the two never loads the other game).
+#pragma once
+#include "platform.h"
+#include <stddef.h>   // offsetof
+
+enum { GQ_SPRING, GQ_SUMMER, GQ_AUTUMN, GQ_WINTER };
+enum { GQ_W_CLEAR, GQ_W_CLOUDY, GQ_W_RAIN, GQ_W_STORM, GQ_W_FOG, GQ_W_SNOW, GQ_W_WINDY, GQ_W_COUNT };
+// What the shaman is doing (GQ_Q_HERO_ACT). The firmware only cares about GQ_ACT_SLEEP.
+enum { GQ_ACT_NONE, GQ_ACT_WANDER, GQ_ACT_SLEEP, GQ_ACT_COUNT };
+
+// ---- gc_query keys
+enum {
+  GQ_Q_DAY,             // world day, 0 = first day (saved)
+  GQ_Q_MINUTE,          // wall clock minute of the day, 0..1439
+  GQ_Q_WEATHER,         // weather shown: live reading, else clear
+  GQ_Q_HERO_ACT,        // GQ_ACT_*
+  GQ_Q_HERO_ABED,       // 1 while the shaman lies in bed
+  GQ_Q_LIVE_WX,         // live weather as stored by gc_set_live_weather: 0..6, or -1 (GC_WX_NONE)
+  GQ_Q_LIVE_TEMP,       // tenths of a degree Celsius as stored (clamped)
+  GQ_Q_LIVE_FLAGS,      // GC_WXF_*
+  GQ_Q_SLEEP_MODE,      // GC_OPT_SLEEP_MODE as stored
+  GQ_Q_SHAMAN_X,        // shaman position in pixels
+  GQ_Q_SHAMAN_Y,
+  GQ_Q_SEED,            // world seed (saved)
+  GQ_Q_COUNT
+};
+
+// ---- gc_debug commands (preview and tests)
+enum { GQ_DBG_SET_DAY, GQ_DBG_NEXT_DAY, GQ_DBG_FORCE_ACT /*arg = GQ_ACT_**/ };
+
+// ---- the saved state, 192 bytes, little-endian, no padding. The core only exports and imports bytes;
+// firmware/store.cpp keeps them in flash.
+#define GQ_SAVE_SIZE    192
+#define GQ_SAVE_MAGIC   0x444F474Du   // bytes "MGOD": MiniGodus (GeekQuest's is 0x53514747)
+#define GQ_SAVE_VERSION 1
+typedef struct {
+  uint32_t magic;            //   0
+  uint16_t version;          //   4
+  uint16_t size;             //   6
+  uint32_t crc32;            //   8  over bytes 12..191
+  uint32_t seq;              //  12
+  uint32_t epoch;            //  16
+  uint32_t play_min;         //  20
+  uint32_t rng;              //  24
+  uint32_t seed;             //  28  world seed
+  uint16_t day;              //  32
+  uint16_t minute;           //  34
+  uint8_t  reserved[156];    //  36
+} GqSave;
+
+static_assert(sizeof(GqSave) == GQ_SAVE_SIZE, "GqSave must be 192 bytes");
+static_assert(offsetof(GqSave, magic) == 0, "magic");
+static_assert(offsetof(GqSave, version) == 4, "version");
+static_assert(offsetof(GqSave, size) == 6, "size");
+static_assert(offsetof(GqSave, crc32) == 8, "crc32");
+static_assert(offsetof(GqSave, seq) == 12, "seq");
+static_assert(offsetof(GqSave, day) == 32, "day");
+static_assert(offsetof(GqSave, reserved) == 36, "reserved");
+
+typedef struct {
+  GqSave   s;             // the saved part
+  uint32_t serial;        // bumped by gq_touch() on state changes
+  uint8_t  net, clock_approx, card_period, night_quiet;
+  uint8_t  sleep_mode;     // GC_OPT_SLEEP_MODE
+  uint8_t  live_wx1;       // live weather: GQ_W_* + 1, 0 = none (so that zero-initialised means none)
+  uint8_t  live_flags;     // GC_WXF_*
+  int16_t  live_temp10;    // tenths of a degree Celsius
+  int16_t  year; uint8_t month, mday, wday;
+} GqState;
+extern GqState G;
