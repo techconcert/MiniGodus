@@ -35,5 +35,13 @@ int  shaman_pers(void);
 int  shaman_cast_dir(void);                             // +1 raising, -1 lowering, 0 clearing an object
 void village_mark_tile(int tx, int ty);
 
+// weather, r5 (nature.inc.h inside village.cpp); godus.cpp ticks it and draws it over the map
+void weather_tick(uint32_t dt, int night);
+void weather_ground(uint16_t* out, int wx0, int wy0);            // puddles, under the objects
+void weather_sky(uint16_t* out, int wx0, int wy0, int s);        // haze, shadows, night, lightning, rain and snow over map strip s
+void weather_flash(void);                                        // a lightning flash now (storms do it by themselves)
+
 // provided by godus.cpp
 void world_cam(int* x, int* y);
+int  world_temp10(void);                                         // tenths of a degree Celsius the rules use (15.0 when there is no reading)
+int  world_has_reading(void);                                    // a live reading or a debug override

@@ -564,8 +564,8 @@ static int start_project(int k, int nolevel_unused) {
   return 1;
 }
 
-// placeholder hooks for later releases: r5 gives the infirmary a sickness to heal, r6 the monument its spare faith
-static int need_health(int weak) { return (weak > 0 || s_sick) && bcount(B_INFIRM, 1) == 0 ? 110 : 0; }
+// health: the first villager who falls sick (real sickness, not hunger) calls for an infirmary. A hook for r6: the monument's spare faith
+static int need_health(int weak) { (void)weak; return s_sick && bcount(B_INFIRM, 1) == 0 ? 110 : 0; }
 static int need_monument(void) { return 0; }
 
 static int water_far(void) {            // some home has no water within 8 tiles

@@ -125,13 +125,19 @@ void world_init(uint32_t seed) {
 // ---------------------------------------------------------------- helpers for the HUD
 static void fmt2(char* p, int v) { p[0] = (char)('0' + (v / 10) % 10); p[1] = (char)('0' + v % 10); }
 
-int world_weather(void) { return G.live_wx1 ? (int)G.live_wx1 - 1 : GQ_W_CLEAR; }
+// The weather the game uses: a debug override, else the live reading, else clear (no reading: mild and dry).
+static int8_t  s_fw = -1;                          // forced weather, -1 none
+static int16_t s_ft;                               // forced temperature (tenths of a degree C) when s_ft_on
+static uint8_t s_ft_on;
+int world_weather(void) { return s_fw >= 0 ? (int)s_fw : (G.live_wx1 ? (int)G.live_wx1 - 1 : GQ_W_CLEAR); }
+int world_has_reading(void) { return s_fw >= 0 || G.live_wx1; }
+int world_temp10(void) { return s_ft_on ? (int)s_ft : (G.live_wx1 ? (int)G.live_temp10 : 150); }
 
 // Whole degrees in the display unit, rounded half away from zero. 0 when there is no live reading.
 int world_temp(int* out, int* is_f) {
-  if (!G.live_wx1) return 0;
+  if (!G.live_wx1 && !s_ft_on) return 0;
   int f = (G.live_flags & GC_WXF_FAHRENHEIT) ? 1 : 0;
-  int v = G.live_temp10;
+  int v = world_temp10();
   if (f) v = v * 9 / 5 + 320;
   int r = v >= 0 ? (v + 5) / 10 : -((-v + 5) / 10);
   *out = r; *is_f = f;
@@ -183,7 +189,7 @@ void world_new_day(void) {
 void gq_touch(void) { G.serial++; }
 
 void world_status_changed(void) { g_dirty |= 1u << BAND_STRIP; }
-void world_weather_changed(void) { g_dirty |= 1u; }
+void world_weather_changed(void) { g_dirty |= 1u | MAP_STRIPS; }
 
 // ------------------------------------------------------------------- simulation
 static void mark_anim_strips(void) {
@@ -247,6 +253,7 @@ void world_tick(uint32_t dt) {
   }
 
   village_tick(dt, bed);
+  weather_tick(dt, bed);
   int cam_moved = 0, sh_moved = 0;
   s_move_acc += dt;
   while (s_move_acc >= MOVE_MS) {
@@ -493,6 +500,7 @@ void world_render(int s, uint16_t* out) {
   if (s == BAND_STRIP) { draw_band(out, y0); return; }
   int wx0 = s_cam_x, wy0 = s_cam_y + y0 - GC_STRIP_H;
   quarts_render(out, wx0, wy0, g_wframe);
+  weather_ground(out, wx0, wy0);
   draw_objects(out, wx0, wy0);
   village_draw(out, wx0, wy0);
   // the shaman, and a Z over his head in bed
@@ -529,6 +537,7 @@ void world_render(int s, uint16_t* out) {
   }
   if (s_sh.act == GQ_ACT_SLEEP && s_sh.y - 14 < wy0 + GC_STRIP_H && s_sh.y + 2 > wy0)
     blit_sprite(out, wy0, sx, s_sh.y - 14, GC_ITEMS(6), 0, 0, g_act);   // Z z z
+  weather_sky(out, wx0, wy0, s);
 }
 
 // ----------------------------------------------------------------------- environment API
@@ -627,6 +636,7 @@ int32_t world_query(int key) {
     case GQ_Q_START_Y: return g_world.start_y;
     case GQ_Q_START_AREA: return world_flood_area(g_world.start_x, g_world.start_y);     // uses the shared g_dist: the shaman recomputes it per step
     case GQ_Q_MAP_HASH: return (int32_t)world_map_hash();
+    case GQ_Q_TEMP10: return world_temp10();
     case GQ_Q_HERO_ON_LAND: return world_walkable((s_sh.x + 8) >> 4, (s_sh.y + 8) >> 4) ? 1 : 0;
     default: return key >= GQ_Q_VILLAGE ? village_stat(key - GQ_Q_VILLAGE) : 0;
   }
@@ -650,6 +660,11 @@ void world_debug(int cmd, int32_t arg) {
   else if (cmd == GQ_DBG_WOOD) village_debug(1, arg);
   else if (cmd == GQ_DBG_ADD_VILLAGERS) village_debug(2, arg);
   else if (cmd == GQ_DBG_THIRST) village_debug(3, arg);
+  else if (cmd == GQ_DBG_WEATHER) { s_fw = (int8_t)(arg >= 0 && arg < GQ_W_COUNT ? arg : -1); world_weather_changed(); }
+  else if (cmd == GQ_DBG_TEMP) { s_ft_on = arg != 9999; s_ft = (int16_t)(arg < -999 ? -999 : (arg > 999 ? 999 : arg)); world_weather_changed(); }
+  else if (cmd == GQ_DBG_SICK) village_debug(5, arg);
+  else if (cmd == GQ_DBG_AGE) village_debug(6, arg);
+  else if (cmd == GQ_DBG_FLASH) weather_flash();
   else if (cmd == GQ_DBG_SET_SEED) new_world((uint32_t)arg, 1);
   else if (cmd == GQ_DBG_FORCE_LAND) s_force_l = (int8_t)(arg >= 0 && arg < LF_COUNT ? arg : -1);
   else if (cmd == GQ_DBG_FORCE_CLIM) s_force_c = (int8_t)(arg >= 0 && arg < CL_COUNT ? arg : -1);

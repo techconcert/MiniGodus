@@ -33,6 +33,7 @@ enum {
   GQ_Q_START_AREA,      // walkable tiles connected to the start tile
   GQ_Q_MAP_HASH,        // FNV-1a over the 1024 map bytes
   GQ_Q_HERO_ON_LAND,    // 1 while the tile under the shaman's centre is one he may walk on
+  GQ_Q_TEMP10,          // tenths of a degree Celsius the rules use (150 without a reading)
   GQ_Q_COUNT,
   GQ_Q_VILLAGE = 64     // GQ_Q_VILLAGE + n: village numbers (see village_stat in village.cpp: 0 population, 1 food, 2 wood, 3 faith, ...)
 };
@@ -49,7 +50,12 @@ enum { GQ_DBG_SET_DAY, GQ_DBG_NEXT_DAY, GQ_DBG_FORCE_ACT /*arg = GQ_ACT_**/,
        GQ_DBG_ADD_VILLAGERS,  // arg = number of adults to add
        GQ_DBG_THIRST,         // arg = thirst of every villager (0..31)
        GQ_DBG_FAITH,          // arg = faith stock
-       GQ_DBG_BAND };         // arg = band slot to show now (0..3 status, 4 day line, 5 shaman project)
+       GQ_DBG_BAND,           // arg = band slot to show now (0..3 status, 4 day line, 5 shaman project)
+       GQ_DBG_WEATHER,        // arg = GQ_W_* forces the weather (and its icon), -1 gives it back to the live reading
+       GQ_DBG_TEMP,           // arg = tenths of a degree Celsius forces the temperature, 9999 gives it back to the live reading
+       GQ_DBG_SICK,           // arg = villager index (0..47): falls sick; -1 everybody
+       GQ_DBG_AGE,            // arg = villager index | age class << 8 (1 adult, 2 elder) | 1 << 16 (weak)
+       GQ_DBG_FLASH };        // a lightning flash now
 
 // ---- the saved state, 192 bytes, little-endian, no padding. The core only exports and imports bytes;
 // firmware/store.cpp keeps them in flash.
