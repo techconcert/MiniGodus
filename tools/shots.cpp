@@ -1,5 +1,6 @@
 // Host renderer: draws a world with the real game core and writes a PPM. Used by tools/make_screenshots.py.
-//   shots screen out.ppm seed landform climate [ticks]   what the clock shows (240x240), after some walking
+//   shots screen out.ppm seed landform climate [ticks [minutes]]   what the clock shows (240x240), after some walking and
+//                                                   'minutes' simulated minutes of village life (clock from 06:00)
 //   shots map    out.ppm seed landform climate           the whole 512x512 map (the camera is moved over it)
 // landform 0..5 or -1 and climate 0..3 or -1 mean "from the seed".
 #include <cstdio>
@@ -23,9 +24,14 @@ int main(int argc, char** argv) {
   gc_debug(GQ_DBG_FORCE_LAND, lf);
   gc_debug(GQ_DBG_FORCE_CLIM, cl);
   gc_debug(GQ_DBG_SET_SEED, (int32_t)seed);
+  int minutes = argc > 7 ? std::atoi(argv[7]) : 0;
   gc_set_clock(10, 24, 1);
   gc_set_live_weather(GQ_W_CLEAR, 214, 0);
   gc_set_status(0, "IP 192.168.1.50");
+  if (minutes > 0) {
+    int wall = 6 * 60;
+    for (int m = 0; m < minutes; m++) { wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1); for (int i = 0; i < 8; i++) gc_tick(500); }
+  }
   for (int i = 0; i < ticks * 4; i++) gc_tick(250);
   static uint16_t strip[GC_STRIP_PIXELS];
   int W = map ? 512 : 240, H = map ? 512 : 240;

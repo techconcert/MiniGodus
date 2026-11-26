@@ -16,7 +16,7 @@ enum { CL_TEMPERATE, CL_SAVANNA, CL_NORTHERN, CL_TROPICAL, CL_COUNT };
 #define MT_SNOW    8
 #define MT_SOIL(b) (((b) >> 4) & 3)
 #define MT_OBJ(b)  ((b) >> 6)
-enum { SOIL_PLAIN, SOIL_FERTILE, SOIL_DRY };
+enum { SOIL_PLAIN, SOIL_FERTILE, SOIL_DRY, SOIL_BUILT /* a building stands here */ };
 enum { OB_NONE, OB_TREE, OB_BUSH, OB_ROCK };   // OB_BUSH on a water tile is a shoal of fish
 
 // tile kinds for colours: the height, or 8 + 0/1/2 for snow cover on height <= 4 / 5 / 6 (so that snow layers differ)
@@ -51,3 +51,8 @@ void draw_objects(uint16_t* out, int wx0, int wy0);
 // flow field to a target tile (distance in steps, 255 = unreachable); used by the shaman
 extern uint8_t g_dist[WM * WM];
 void world_flow(int tx, int ty);
+void world_flow_begin(void);                          // several goals: begin, seed each goal tile, run
+void world_flow_seed(int tx, int ty, int d);
+void world_flow_run(void);
+void world_set_built(int tx, int ty, int on);
+void world_clear_object(int tx, int ty);

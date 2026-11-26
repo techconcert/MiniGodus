@@ -5,12 +5,14 @@ spends the faith that villagers produce to reshape the land and to lay out homes
 workshops. You never press anything: it is a clock with a little world in it. The full plan is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-**Status: release r2, the world.** The map now exists: a generated 32x32 world with stepped height layers, cliffs,
-beaches, shores and snow, in four climates, with a camera that follows the shaman (a placeholder that wanders
-on walkable ground and goes to bed). The top bar has the time, the weather and four counters (faith, food, wood,
-population, placeholder values until r3), the bottom band adds "DAY n OF <world name>". Villagers, buildings and the
-faith economy arrive in the next releases. The recovery layer, update page, rescue hotspot, WiFi, weather, time zone,
-sleep schedule and flash saving are unchanged from r1.
+**Status: release r3, the villagers.** A couple of villagers now live in the generated world and look after
+themselves: they eat three meals a day at 07:30, 12:30 and 19:00 of the clock's local time, drink, sleep when the clock's
+sleep schedule says so, grow up, have children, age and die. Every morning the adults get a job by need (farmer, fisher,
+lumberjack, builder, healer, water carrier; herders once pens exist), and the village builds itself: tents, huts, wheat
+fields, fishing huts and wells, on a site search that never cuts the map in two. Faith comes from awake adults and
+elders praying. The top bar shows one big counter at a time (faith, population, food, wood, 3 s each). The shaman
+wanders near the village. The recovery layer, update page, rescue hotspot, WiFi, weather, time zone, sleep schedule and
+flash saving are unchanged from r1. The faith economy that the shaman spends arrives in the next releases.
 
 **Download:** every build of the `main` branch is published on the
 [Releases page](https://github.com/techconcert/MiniGodus/releases). Releases are named by number
@@ -66,6 +68,49 @@ its corner and picks a piece of art for the pair of terrains (water/sand, sand/g
 grass/snow, deep/shallow water). That gives rounded coasts and curved cliff corners from about 70 small pieces
 of art. A step up draws a cliff face on its south side. The pieces are chosen once when the map changes, not per
 frame; the 13 map strips are then redrawn from those tables while the camera scrolls pixel by pixel.
+
+## The village (r3)
+
+![Village, temperate](docs/screenshots/village-island-temperate.png)
+
+| Village, tropical river valley | Village, northern island |
+|---|---|
+| ![](docs/screenshots/village-river-valley-tropical.png) | ![](docs/screenshots/village-island-northern.png) |
+
+**People.** Up to 48 villagers, 6 bytes each. The game starts with one couple in a tent. A child grows up in 5 days; an adult
+lives 20 to 28 days (the last 5 are spent as an elder, who prays). A child is born, at most one a day, when there is a free
+bed, two days of food to spare and an adult man and woman who are not weak. Hunger is counted in missed meals: weak after 4,
+death after 6 (7 with a healer awake). Thirst is satisfied at a well or on the shore; a water carrier fills a stock that
+everybody can drink from.
+
+**Jobs, chosen each morning by need.** Farmer (hoe, a wheat field), fisher (rod, fishing hut or shore), lumberjack (axe,
+fells a tree, trees regrow a little every day), builder (hammer, builds the current site), healer (herbs), water
+carrier (bucket), child (plays), elder (prays). Herders need pens, which come in a later release. Each job has its own
+tunic colour and tool animation.
+
+**Buildings.** Tent (2 beds), hut (4 beds), wheat field (three growth stages), well, fishing hut on a beach next to the water.
+The planner puts a new building near the village green when the village needs it (a bed for everybody plus one spare, one field
+per 5 people, a well, a fishing hut) and the wood is there; the builder works on it minute by minute. Faith is produced by awake adults every
+30 minutes, elders count double.
+
+**Time.** Everything runs on the clock's real time, so a game day is a real day. A longer jump of the clock (WiFi time
+sync, power cut) is not played back, so a clock that was off never starves its village.
+
+**Memory.** The village uses about 500 bytes of RAM. Pathfinding and the search for building sites share one 1 KB distance
+buffer; the quarter-tile table is a window around the camera instead of the whole map, which saved more than the village needs.
+The saved game (still 192 bytes) holds the first 16 villagers and 18 buildings, food, wood, faith and water; the full multi-slot
+save is release r6.
+
+The land itself got a pass in r3: heights come from fractal noise with a domain warp before the landform shape is applied,
+so coasts and cliffs are irregular instead of nested rings, and islands and archipelagos cover about half the map.
+
+| Before (r2) | After (r3) |
+|---|---|
+| ![](docs/screenshots/shape-before-island-northern.png) | ![](docs/screenshots/shape-after-island-northern.png) |
+| ![](docs/screenshots/shape-before-island-temperate.png) | ![](docs/screenshots/shape-after-island-temperate.png) |
+| ![](docs/screenshots/shape-before-archipelago-tropical.png) | ![](docs/screenshots/shape-after-archipelago-tropical.png) |
+
+The top bar: ![](docs/screenshots/topbar-counters.png)
 
 ## Hardware
 

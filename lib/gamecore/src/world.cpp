@@ -156,13 +156,15 @@ static void smooth_heights(void) {
 }
 
 // ------------------------------------------------------------------------------------------------ walking
-static int walk_ok(uint8_t b) { int h = MT_H(b); return h >= 2 && h <= 6 && MT_OBJ(b) == OB_NONE; }
+static int walk_ok(uint8_t b) { int h = MT_H(b); return h >= 2 && h <= 6 && MT_OBJ(b) == OB_NONE && MT_SOIL(b) != SOIL_BUILT; }
 int world_walkable(int tx, int ty) { return tx >= 0 && ty >= 0 && tx < WM && ty < WM && walk_ok(g_map[TI(tx, ty)]); }
 
-void world_flow(int tx, int ty) {
-  for (int i = 0; i < WM * WM; i++) g_dist[i] = 255;
-  if (!world_walkable(tx, ty)) return;
-  g_dist[TI(tx, ty)] = 0;
+// Distance field in steps. world_flow_begin clears it, seeds are walkable tiles at distance 0 (or more), world_flow_run
+// relaxes it. The target of world_flow itself may be a tile nobody can stand on (a building): its walkable neighbours
+// are then the goal, at distance 0.
+void world_flow_begin(void) { for (int i = 0; i < WM * WM; i++) g_dist[i] = 255; }
+void world_flow_seed(int tx, int ty, int d) { if (tx >= 0 && ty >= 0 && tx < WM && ty < WM && world_walkable(tx, ty)) g_dist[TI(tx, ty)] = (uint8_t)d; }
+void world_flow_run(void) {
   for (int pass = 0; pass < 120; pass++) {
     int changed = 0;
     for (int dir = 0; dir < 2; dir++)
@@ -179,6 +181,21 @@ void world_flow(int tx, int ty) {
     if (!changed) break;
   }
 }
+void world_flow(int tx, int ty) {
+  world_flow_begin();
+  if (tx < 0 || ty < 0 || tx >= WM || ty >= WM) return;
+  if (world_walkable(tx, ty)) world_flow_seed(tx, ty, 0);
+  else { world_flow_seed(tx - 1, ty, 0); world_flow_seed(tx + 1, ty, 0); world_flow_seed(tx, ty - 1, 0); world_flow_seed(tx, ty + 1, 0); }
+  world_flow_run();
+}
+
+// Occupies (on) a tile with a building: no object, nobody walks there.
+void world_set_built(int tx, int ty, int on) {
+  if (tx < 0 || ty < 0 || tx >= WM || ty >= WM) return;
+  uint8_t& b = g_map[TI(tx, ty)];
+  if (on) b = (uint8_t)((b & 0x0F) | (SOIL_BUILT << 4)); else b = (uint8_t)(b & 0x0F);
+}
+void world_clear_object(int tx, int ty) { if (tx >= 0 && ty >= 0 && tx < WM && ty < WM) g_map[TI(tx, ty)] &= 0x3F; }
 
 // Walkable tiles connected to (tx, ty). Uses the shared distance buffer g_dist like every other search.
 int world_flood_area(int tx, int ty) {
