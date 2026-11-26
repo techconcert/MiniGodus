@@ -98,7 +98,7 @@ static void add_fail(int x, int y) { s_fail[s_failn & 3][0] = (uint8_t)x; s_fail
 
 // ------------------------------------------------------------------ site search
 struct Cand { uint8_t x, y, var, H; int16_t cost, faith; };
-enum { NC = 5, NOSITE = -30000 };
+enum { NC = 14, NOSITE = -30000 };
 
 static int nvars(int k) { return k == SP_POND ? 2 : (k == SP_PLOT ? 1 : NVAR[k]); }
 static void kdim(int k, int var, int* w, int* h) {
@@ -197,7 +197,7 @@ static int eval_site(int k, int var, int ax, int ay, int nolevel, int* Hout, int
         if (g_dist[y * WM + x] + 1 < dist) dist = g_dist[y * WM + x] + 1;
       }
     }
-  if (dist >= 250 || (k == SP_POND && (dist < 2 || dist > 14))) return NOSITE;
+  if (dist >= 250 || (k == SP_POND && (dist < 2 || dist > 12))) return NOSITE;
   if (nolevel && ring) return NOSITE;
   faith += ring;
   cost = faith + dist * 2 + plotn * (home || k == SP_PLOT ? -3 : 12) + repl_tiles * 5 + (int)(hash2(ax, ay) & 1);
@@ -261,7 +261,7 @@ static int keeps_connected(int ax, int ay, int w, int h, int fish) {
   for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { keep[j * 3 + i] = g_map[(ay + j) * WM + ax + i]; world_set_built(ax + i, ay + j, 1); }
   (void)fish;
   world_flow(cx(), cy());
-  int ok = count_reach() == base - fr && ring_access(ax, ay, w, h);
+  int ok = count_reach() >= base - fr - 2 && ring_access(ax, ay, w, h);
   for (int b = 0; b < MAXB && ok; b++)
     if (bused(b) && (had[b >> 5] & (1u << (b & 31)))) {
       int bw_, bh_;
@@ -529,7 +529,7 @@ static int start_project(int k, int nolevel_unused) {
 }
 
 // placeholder hooks for later releases: r5 gives the infirmary a sickness to heal, r6 the monument its spare faith
-static int need_health(int weak) { return (weak > 0 || s_sick) && bcount(B_INFIRM, 1) == 0 ? 55 : 0; }
+static int need_health(int weak) { return (weak > 0 || s_sick) && bcount(B_INFIRM, 1) == 0 ? 110 : 0; }
 static int need_monument(void) { return 0; }
 
 static int water_far(void) {            // some home has no water within 8 tiles
@@ -578,7 +578,7 @@ static void shaman_plan(void) {
   else if (fields * 5 < p + 2) sc[N_FOOD] = 75;
   else if ((p >= 10 && src < 4) || (p >= 8 && src < 3)) sc[N_FOOD] = 40;
   if (beds < p) sc[N_HOUSING] = 100; else if (beds < p + 2) sc[N_HOUSING] = 65;
-  if (p >= 2 && water_far()) sc[N_WATER] = 85;
+  if (p >= 2 && bcount(B_WELL, 1) < 2 + p / 8 && water_far()) sc[N_WATER] = 85;
   if (!coast && p >= 2) sc[N_POND] = 80;
   sc[N_HEALTH] = need_health(weak);
   if (s_wood < 10 && bcount(B_LUMBER, 1) < 1 + p / 12 && p >= 4) sc[N_WOOD] = 60;

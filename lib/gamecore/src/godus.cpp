@@ -300,7 +300,14 @@ void world_tick(uint32_t dt) {
           int tx, ty;
           if (shaman_target(s_sh.x >> 4, s_sh.y >> 4, &tx, &ty)) {
             s_wtx = (uint8_t)tx; s_wty = (uint8_t)ty; s_retry = 0; s_work = 1;
-            if (!walk_beside(tx, ty)) { shaman_abort(); s_work = 0; s_pause = 400; }
+            if (!walk_beside(tx, ty)) {
+              // maybe he is shut in a pocket the village cannot reach: he steps back to his bed and tries again
+              world_flow(bed_tx(), bed_ty());
+              if (g_dist[(s_sh.y >> 4) * WM + (s_sh.x >> 4)] == 255) {
+                s_sh.x = (int16_t)(bed_tx() * GC_TILE); s_sh.y = (int16_t)(bed_ty() * GC_TILE); s_walking = 0; g_dirty |= MAP_STRIPS;
+              }
+              if (!walk_beside(tx, ty)) { shaman_abort(); s_work = 0; s_pause = 400; }
+            }
             continue;
           }
         }

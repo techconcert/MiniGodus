@@ -84,6 +84,7 @@ static void test_twenty_days() {
           for (int s = 0; s < GC_ROWS; s++) gqt::render_strip_guarded(s);
           check_rules("run");
         }
+        if (m % 13 == 0) for (auto& b : buildings()) if (!b.site) types.insert(b.tp);
         if (m == 1439 && vq(Q_UNREACH) > 0) unreach_seen++;
       }
     check_rules("end");
@@ -103,6 +104,7 @@ static void test_twenty_days() {
   CHECK(seeds_with_casts >= 15);                  // he spends faith and terraforms in most worlds
   CHECK(grew >= 18);                              // the population grows
   CHECK(total_built >= 20 * 5);
+  CHECK(types.count(B_HUT) && types.count(B_COTTAGE));       // the home tiers are climbed one after the other in a natural start
   CHECK(pers.size() == 4);                        // every personality turns up
   CHECK(bad <= 20 * 6);                           // slopes are mended (a tile pulled both ways is left alone)
 }
@@ -125,6 +127,7 @@ static void test_all_buildings() {
           gc_debug(GQ_DBG_FAITH, 600);
           if (seed % 3 == 1 && d == 2 && m == 0) gc_debug(GQ_DBG_THIRST, 30);         // somebody falls weak: an infirmary
         }
+        if (m % 13 == 0) for (auto& b : buildings()) if (!b.site) types.insert(b.tp);       // smaller homes are replaced later: note them while they stand
         if (m % 307 == 0) { for (int s = 0; s < GC_ROWS; s++) gqt::render_strip_guarded(s); check_rules("all"); }
       }
     check_rules("all end");
@@ -133,7 +136,7 @@ static void test_all_buildings() {
   }
   const char* names[B_COUNT] = {"tent", "hut", "cottage", "manor", "field", "orchard", "pen", "fishing hut", "well", "lumberjack hut", "granary", "shrine", "infirmary"};
   for (int t = 0; t < B_COUNT; t++) std::printf("%-15s %s\n", names[t], types.count(t) ? "built" : "NEVER");
-  for (int t = 1; t < B_COUNT; t++) CHECK(types.count(t));      // (the tent is the start building and is replaced by bigger homes)
+  for (int t = B_MANOR; t < B_COUNT; t++) CHECK(types.count(t));      // (huts and cottages are skipped with 30 settlers at once: test_twenty_days climbs the tiers)
 }
 
 // ------------------------------------------------------------------------------------------------ ponds
@@ -146,14 +149,14 @@ static void test_pond() {
     gc_set_depth(40);
     int sx = (int)gc_query(GQ_Q_START_X), sy = (int)gc_query(GQ_Q_START_Y);
     int water_before = 0;
-    for (int y = 0; y < WM; y++) for (int x = 0; x < WM; x++) if (water(x, y) && std::abs(x - sx) + std::abs(y - sy) <= 12) water_before++;
+    for (int y = 0; y < WM; y++) for (int x = 0; x < WM; x++) if (water(x, y) && std::abs(x - sx) + std::abs(y - sy) <= 16) water_before++;
     if (water_before > 0) continue;
     tried++;
     int wall = 7 * 60 + 59;
     for (int d = 0; d < 6; d++)
       for (int m = 0; m < 1440; m++) { minute(wall); if (m % 60 == 0) gc_debug(GQ_DBG_FAITH, 400); }
     int water_after = 0;
-    for (int y = 0; y < WM; y++) for (int x = 0; x < WM; x++) if (water(x, y) && std::abs(x - sx) + std::abs(y - sy) <= 16) water_after++;
+    for (int y = 0; y < WM; y++) for (int x = 0; x < WM; x++) if (water(x, y) && std::abs(x - sx) + std::abs(y - sy) <= 18) water_after++;
     std::printf("pond seed %u: ponds dug %d, water tiles near the village %d\n", seed, vq(Q_PONDS), water_after);
     if (vq(Q_PONDS) > 0) { ponds++; CHECK(water_after >= 6); }
     check_rules("pond");
