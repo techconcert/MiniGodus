@@ -14,7 +14,7 @@
 // Wood: lumberjacks fell trees (a stump stays), plant a sapling on the stump, saplings grow back into trees in 4 to 5 days, and the
 // forest seeds new saplings by itself, so wood never runs out for good (the lumberjacks leave the last trees alone).
 
-enum { SAP_N = 16, TREE_FLOOR = 6, TREE_TARGET = 36, NP = 32, MAPSTRIPS = 0x3FFE };
+enum { SAP_N = 24, TREE_FLOOR = 6, TREE_TARGET = 36, NP = 32, MAPSTRIPS = 0x3FFE };
 
 static uint16_t s_sap[SAP_N];                 // stumps and saplings: x | y << 5 | age days << 10 | sapling << 13, 0xFFFF = free
 static uint32_t s_wsnow[WM];                  // tiles where the weather put snow (one bit each); the permanent snow caps are not in it
@@ -84,7 +84,8 @@ static void sickness_day(void) {
       continue;
     }
     int h = hunger(i) > 3 ? 3 : hunger(i);
-    int risk = 1 + 3 * h + thirst(i) / 3 + (s_ill[i] & 15) + ((s_ill[i] & 16) ? 12 : 0) + (frail ? 3 : 0);
+    int ex = s_ill[i] & 15;
+    int risk = 1 + 3 * h + thirst(i) / 4 + 2 * (ex > 10 ? 10 : ex) + ((s_ill[i] & 16) ? 12 : 0) + (frail ? 3 : 0);
     if (risk > 60) risk = 60;
     s_ill[i] = 0;
     if ((int)(vr() % 100) < risk) { s_ill[i] = 0x80; s_sick = 1; s_onsets++; s_roles_dirty = 1; mark_tile(V[i].x, V[i].y); }

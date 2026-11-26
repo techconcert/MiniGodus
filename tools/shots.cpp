@@ -80,7 +80,7 @@ static void focus(char c) {
       break;
     }
   } else if (c == 's') {
-    for (int k = 0; k < 16; k++) { int v = vq(211 + k); if (v >= 0) { ax += v & 255; ay += (v >> 8) & 255; n++; } }
+    for (int k = 0; k < 24; k++) { int v = vq(211 + k); if (v >= 0) { ax += v & 255; ay += (v >> 8) & 255; n++; } }
   } else if (c == 'h') {
     for (int i = 0; i < WM * WM; i++) if (MT_H(g_map[i]) >= 5 && MT_H(g_map[i]) <= 6) { ax += i % WM; ay += i / WM; n++; }
   }
@@ -170,7 +170,7 @@ int main(int argc, char** argv) {
       for (int i = 0; i < 4000; i++) {
         int cam_x = (int)gc_query(GQ_Q_CAM_X), cam_y = (int)gc_query(GQ_Q_CAM_Y), hit = 0;
         for (int k = 0; k < 4; k++) {
-          int dx = vq(230 + k) - cam_x - 120, dy = vq(234 + k) - cam_y - 120;
+          int dx = vq(240 + k) - cam_x - 120, dy = vq(244 + k) - cam_y - 120;
           if (dx > -30 && dx < 30 && dy > -20 && dy < 20) hit = 1;
         }
         if (hit) break;

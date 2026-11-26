@@ -5,15 +5,13 @@ spends the faith that villagers produce to reshape the land and to lay out homes
 workshops. You never press anything: it is a clock with a little world in it. The full plan is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-**Status: release r4, the shaman builds.** The shaman now makes the decisions. Every 10 game minutes he scores the
-village's needs (food, housing, water, health, wood, growth, faith, monument), picks the most pressing project he can
-afford and carries it out one tile at a time: he walks beside the tile, raises his staff with sparkles, and the land changes
-by one layer, paid in faith. He levels plots, digs a pond when there is no coast, cuts ramps so that everything stays
-walkable, and lays out all thirteen buildings (tent, hut, cottage, manor, wheat field, orchard, animal pen, fishing hut, well,
-lumberjack hut, granary, shrine, infirmary) that the builders then construct in three visible stages. Villagers still eat
-three meals a day, drink, sleep on the clock's schedule, have children, age and die (r3). The bottom band shows his
-project. The recovery layer, update page, rescue hotspot, WiFi, weather, time zone, sleep schedule and flash saving are
-unchanged from r1.
+**Status: release r5, weather, sickness and wood.** The real weather now plays in the game. Rain, storms, snow, heat, cold and
+fog (the Open-Meteo reading the clock already fetches) change how the fields grow, how thirsty people are, how much firewood the
+village burns and who falls sick; there is rain, snow, lightning, haze and drifting cloud shadows on the screen. Villagers get sick
+(more often when hungry, thirsty, cold or wet), an infirmary with a healer cures them in a day, and untreated sickness can kill the
+old and the weak. Lumberjacks fell trees, plant saplings on the stumps and the forest grows back. The shaman (r4) still decides what
+to build; he now builds the infirmary for the first sick villager. The recovery layer, update page, rescue hotspot, WiFi, time
+zone, sleep schedule and flash saving are unchanged.
 
 **Download:** every build of the `main` branch is published on the
 [Releases page](https://github.com/techconcert/MiniGodus/releases). Releases are named by number
@@ -130,7 +128,7 @@ The top bar: ![](docs/screenshots/topbar-counters.png)
 | ![](docs/screenshots/town-day20-mountain-plateau-northern.png) | |
 
 **Needs and projects.** He scores food (less than 2 days of food, or too few fields), housing (fewer beds than people),
-water (a home with no water within 8 tiles), health (the first weak villager wants an infirmary; healing comes in r5),
+water (a home with no water within 8 tiles), health (the first sick villager wants an infirmary, r5),
 wood, growth (a new home tier unlocked: a flat 3x3 plot beside the homes first, then the home), faith (no shrine) and
 monument (a hook for r6). A pond has its own need when there is no coast. A world's seed decides his personality: farmer
 (green robe), herder (sand), fisher (blue), builder (red). It biases the scores and the choice of food building.
@@ -160,7 +158,7 @@ second pond for fish (LEVELLING LAND on the band). A building that trees have sh
 | Lumberjack hut | 2x2 | 4 | more wood per tree |
 | Granary | 2x2 | 10 | food cap +100 |
 | Shrine | 2x2 | 6 | +1 faith per half hour, praying elders count 3 |
-| Infirmary | 2x2 or 3x2 | first weak villager | r5 heals |
+| Infirmary | 2x2 or 3x2 | first sick villager | heals in 1 day with a healer (3 days without) |
 
 A bigger home may replace tents and huts. Eating from three or more of the four food sources (grain, fruit, animal, fish)
 in one day makes the village content: 25% more faith until midnight.
@@ -168,6 +166,66 @@ in one day makes the village content: 25% more faith until midnight.
 **Memory.** The shaman costs about 100 bytes of static RAM (project, reserved plots, last ramps) and the buildings table grew
 from 32 to 40 entries; every search shares the one distance buffer. The saved game (still 192 bytes, version 4) now keeps each building's
 size, but not the dug land: after a load the land is generated again and healed at once, free of charge.
+
+## Weather, sickness and wood (r5)
+
+The weather is the live Open-Meteo reading (WMO weather code and temperature, every 30 minutes). `wx_state()` in
+`lib/gqsafe/src/wxparse.cpp` maps the code to the game's states: 0 to 3 clear or cloudy (windy above 29 km/h), 45 and 48 fog,
+51 to 67 and 80 to 82 rain, 71 to 77, 85 and 86 snow, 95 to 99 thunderstorm. With no reading (no WiFi, a failed fetch) the game is
+mild and dry: clear sky, 15 C, no rain, no shadows, no frost, no heat.
+
+| Weather | On screen | In the game |
+|---|---|---|
+| Rain, drizzle | animated rain, puddles that gather on the low land and dry again | fields grow 50% faster, fishers catch 1 more, people working outside collect exposure |
+| Thunderstorm | heavier slanted rain, a lightning bolt now and then that brightens one or two strips | like rain, and everybody goes home: nobody works outside while it lasts (they eat and drink at home) |
+| Snow | falling snow; snow settles on the high layers in three steps (layer 6, then 5, then 4) and melts away again | fields stop, it counts as cold (firewood) |
+| Above 28 C | | thirst comes twice as often, water carriers are hired in numbers (up to 3) |
+| Below 8 C | | each occupied home burns 1 wood per night (chimney smoke until 09:00); lumberjacks come first; a home without wood is a cold home |
+| Fog | haze, thicker at the top of the screen | none |
+| Clear, cloudy, windy | cloud shadows drift over the land (2, 4 or 3 of them) | none |
+| Night (the clock's sleep schedule) | the map is dimmed | everyone sleeps |
+
+| Rain | Thunderstorm | Snow on the high layers |
+|---|---|---|
+| ![](docs/screenshots/weather-rain.png) | ![](docs/screenshots/weather-storm.png) | ![](docs/screenshots/weather-snow.png) |
+
+| Heat, water carriers | Cold night, chimney smoke | Fog |
+|---|---|---|
+| ![](docs/screenshots/weather-heat.png) | ![](docs/screenshots/weather-cold-night.png) | ![](docs/screenshots/weather-fog.png) |
+
+| Cloud shadows | An infirmary with a sick villager (green cross) | Lumberjack, stumps and saplings |
+|---|---|---|
+| ![](docs/screenshots/weather-clouds.png) | ![](docs/screenshots/infirmary-sick.png) | ![](docs/screenshots/lumberjack-saplings.png) |
+
+**Sickness.** Once a day, at midnight, every villager rolls against a risk of 1% plus: 3% for each missed meal (up to 3), a quarter of
+a percent per thirst point, 2% per half hour spent outside in the rain (up to 10 half hours, 20%), 2% per hour outside in the cold (counted together), 12% for a night in a
+cold home without wood, and 3% for elders and the weak. A sick villager does not work, walks to the infirmary and wears a green tunic and
+a green cross. With an infirmary and a healer the sickness is over at the next midnight; an infirmary with nobody to tend it takes 2 days,
+no infirmary 3 days. Untreated, a sick elder or weak villager dies with a 25% chance at each midnight (6% in an infirmary with no healer);
+healthy children and adults never die of it. A healer is hired as soon as somebody is sick and there is an infirmary. The shaman's health
+need (the top of his list) builds the infirmary when the first villager falls sick, hunger alone does not call for one.
+
+**Wood.** A lumberjack walks to a tree, fells it (3 wood, 4 with a lumberjack hut) and leaves a stump; his next swing plants a sapling on the
+stump. A sapling becomes a tree after 4 to 5 days (never beside a building, on a reserved plot or on the green, never where the tree would shut a
+path); a stump left alone rots away after 3 days. The forest also seeds saplings beside its own trees (up to 36 trees and saplings, more when the
+forest is nearly gone). Lumberjacks leave the last 6 trees alone and never fell on a reserved plot or a project footprint.
+
+**Debug commands** (`GQ_DBG_*` in `lib/gamecore/src/gq_types.h`, used by the tests and `tools/shots.cpp`; the browser preview's live weather menu does the
+same through the normal reading): `GQ_DBG_WEATHER` forces a weather (and its top bar icon), `GQ_DBG_TEMP` forces the temperature in tenths of a degree,
+`GQ_DBG_SICK` makes a villager sick, `GQ_DBG_AGE` makes one an elder or weak, `GQ_DBG_FLASH` strikes lightning now.
+
+**Cost.** Rain and snow are 24 to 32 particles in one fixed array, moved every 100 ms and drawn into the strips that are being drawn anyway (the
+map strips are redrawn about 10 times a second while it rains or snows; clear weather redraws only what changed, plus the slow cloud shadows).
+Puddles, haze, shadows, the night dimming and the lightning are per strip, with no full-screen buffer.
+
+**Memory and save.** The weather, sickness and forest add about 340 bytes of static RAM (sick state 48 bytes, snow map 128, saplings 32, particles 64,
+shadows 8, counters). The saved game keeps 192 bytes, version 4: a villager's sick state is one more bit in the villager's record (old saves read
+as healthy), so an r4 save loads. The weather itself, the snow, the stumps and the saplings are not saved (the weather comes from the live reading, and
+the forest is regenerated from the seed on load), nor is the sickness of the villagers beyond the first 16.
+
+**Known limits of r5:** the full multi-slot save is r6; the forest, felled trees and saplings come back as generated after a restart; a sick villager is
+sick for the whole time (no partial recovery); the night dimming has no lit windows yet; weather does not stop the shaman casting; cloud shadows and the
+night dimming are drawn over buildings and people as a flat tint.
 
 ## Hardware
 

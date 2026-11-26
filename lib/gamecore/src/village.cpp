@@ -753,7 +753,7 @@ int village_stat(int which) {
     case 14: { int n = 0; for (int i = 0; i < MAXV; i++) if (used(i) && vact(i) == A_SLEEP) n++; return n; }
     default: break;
   }
-  if (which >= 230 && which < 238) return which < 234 ? s_cs[which - 230][0] : s_cs[which - 234][1];      // cloud shadows: x, then y (world pixels)
+  if (which >= 240 && which < 248) return which < 244 ? s_cs[which - 240][0] : s_cs[which - 244][1];      // cloud shadows: x, then y (world pixels)
   if (which >= 211 && which < 211 + SAP_N) { uint16_t e = s_sap[which - 211]; return e == 0xFFFF ? -1 : (sap_x(e) | (sap_y(e) << 8) | (sap_age(e) << 16) | (sap_kind(e) << 20)); }
   if (which >= 20 && which < 20 + R_COUNT) { int n = 0; for (int i = 0; i < MAXV; i++) if (used(i) && vrole(i) == which - 20) n++; return n; }
   if (which >= 40 && which < 40 + B_COUNT) return count_done(which - 40);

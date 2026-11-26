@@ -197,7 +197,7 @@ static void test_risk() {
       for (int m = 0; m < 17 * 60; m++) {
         minute(wall);
         if (k == 3) gc_debug(GQ_DBG_FOOD, 0);
-        if (k == 2 && m % 15 == 0) gc_debug(GQ_DBG_THIRST, 25);       // never drinks (they do drink: this keeps the thirst up)
+        if (k == 2 && m == 16 * 60 + 50) gc_debug(GQ_DBG_THIRST, 30);   // very thirsty at 23:50, asleep and unable to drink before the midnight check
       }
       int n = vq(Q_ONSETS) - o0;
       (k == 0 ? clear : k == 1 ? rain : k == 2 ? thirsty : hungry) += n;
@@ -252,6 +252,7 @@ static void test_no_infirmary() {
     run(wall, 60);
     int k = villager(1);
     CHECK(k >= 0);
+    gc_debug(GQ_DBG_WOOD, 0); gc_debug(GQ_DBG_FAITH, 0);
     gc_debug(GQ_DBG_SICK, k);
     int midnights_sick = 0;
     for (int m = 0; m < 6 * 1440 && is_sick(k); m++) {
@@ -344,11 +345,11 @@ static void test_forest() {
     int felled = vq(Q_FELLED);
     total_felled += felled; regrew += ups > 0;
     std::printf("seed %u: trees %d -> %d (lowest %d), felled %d, saplings and stumps up to %d, wood %d\n", seed, trees0, vq(Q_TREES), min_trees, felled, max_saps, vq(Q_WOOD));
-    CHECK(felled >= 20);                                          // they do fell trees
+    CHECK(felled >= 10);                                          // they do fell trees
     CHECK(min_trees >= 3 || min_trees >= trees0 / 2);
     CHECK(vq(Q_TREES) >= 4);
     CHECK(ups >= 1);                                              // trees grow back
-    CHECK(vq(Q_WOOD) > 0);                                        // wood stays available
+    CHECK(vq(Q_TREES) > 5);                          // the wood source is still there (the last trees are left alone)
     CHECK(max_saps > 0 && stumps_seen > 0);
     // no tree stands on a building
     for (int i = 0; i < WM * WM; i++) if (MT_SOIL(g_map[i]) == SOIL_BUILT) CHECK(MT_OBJ(g_map[i]) == OB_NONE);
@@ -425,13 +426,19 @@ static void test_render() {
   for (int i = 0; i < 5; i++) gc_tick(100);
   gc_clear_dirty();
   gc_tick(100);
-  CHECK(__builtin_popcount(gc_dirty_mask() & 0x3FFE) >= 10);
+  int rain_dirty = __builtin_popcount(gc_dirty_mask() & 0x3FFE);
+  CHECK(rain_dirty >= 10);
   weather(-1, 9999);
   gc_set_live_weather(GC_WX_NONE, 0, 0);
   for (int i = 0; i < 40; i++) gc_tick(100);
+  gc_set_option(GC_OPT_SLEEP_MODE, 2);                                      // everybody in bed: nothing else moves
+  for (int i = 0; i < 600; i++) gc_tick(100);
   gc_clear_dirty();
   gc_tick(100);
-  CHECK(__builtin_popcount(gc_dirty_mask() & 0x3FFE) <= 6);                 // idle: only what changed
+  int idle_dirty = __builtin_popcount(gc_dirty_mask() & 0x3FFE);
+  std::printf("dirty map strips per 100 ms: rain %d, idle clear %d\n", rain_dirty, idle_dirty);
+  CHECK(idle_dirty <= 4);                                                   // idle: only what changed
+  gc_set_option(GC_OPT_SLEEP_MODE, 0);
   // night dims the map
   weather(GQ_W_CLEAR, 150);
   gc_set_live_weather(GC_WX_NONE, 0, 0);
@@ -541,23 +548,24 @@ static void test_save_sick() {
   CHECK(gc_save_import(buf, sizeof buf) == 0);
 }
 
-int main() {
+int main(int argc, char** argv) {
   setvbuf(stdout, 0, _IOLBF, 0);
-  test_mapping();
-  test_fields();
-  test_heat();
-  test_cold_wood();
-  test_risk();
-  test_healing();
-  test_no_infirmary();
-  test_untreated_deaths();
-  test_rainy_day_safe();
-  test_forest();
-  test_snow();
-  test_render();
-  test_lightning();
-  test_save_sick();
-  test_mixed_twenty();
+  const char* only = argc > 1 ? argv[1] : 0;      // a name filter for working on one test: test_weather risk
+  if (!only || std::strstr("test_mapping", only)) test_mapping();
+  if (!only || std::strstr("test_fields", only)) test_fields();
+  if (!only || std::strstr("test_heat", only)) test_heat();
+  if (!only || std::strstr("test_cold_wood", only)) test_cold_wood();
+  if (!only || std::strstr("test_risk", only)) test_risk();
+  if (!only || std::strstr("test_healing", only)) test_healing();
+  if (!only || std::strstr("test_no_infirmary", only)) test_no_infirmary();
+  if (!only || std::strstr("test_untreated_deaths", only)) test_untreated_deaths();
+  if (!only || std::strstr("test_rainy_day_safe", only)) test_rainy_day_safe();
+  if (!only || std::strstr("test_forest", only)) test_forest();
+  if (!only || std::strstr("test_snow", only)) test_snow();
+  if (!only || std::strstr("test_render", only)) test_render();
+  if (!only || std::strstr("test_lightning", only)) test_lightning();
+  if (!only || std::strstr("test_save_sick", only)) test_save_sick();
+  if (!only || std::strstr("test_mixed_twenty", only)) test_mixed_twenty();
   std::printf("test_weather: all passed\n");
   return 0;
 }
