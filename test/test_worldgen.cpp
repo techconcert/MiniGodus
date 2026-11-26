@@ -211,7 +211,26 @@ static void test_shape_irregular() {
   CHECK(narrow < worlds * 3);                                 // a handful of tiles at most (the start carve and the height smoothing)
 }
 
+// r4: rock (height 7) is the highest peaks only: at most about 8% of the land, 15% on the mountain plateau, so the
+// shaman has building land to work with.
+static void test_rock_share() {
+  int rocky_worlds = 0;
+  for (uint32_t seed = 1; seed <= 150; seed++)
+    for (int lf = 0; lf < 6; lf++) {
+      world_generate(seed, lf, (int)(seed & 3));
+      int land = 0, rock = 0;
+      for (int i = 0; i < WM * WM; i++) { int h = MT_H(g_map[i]); if (h >= 3) land++; if (h == 7) rock++; }
+      CHECK(land > 0);
+      int limit = lf == LF_PLATEAU ? 15 : 8;
+      if (rock * 100 > land * limit) std::printf("rock %d of %d land tiles (landform %d seed %u)\n", rock, land, lf, seed);
+      CHECK(rock * 100 <= land * limit);
+      if (rock) rocky_worlds++;
+    }
+  std::printf("rock: %d of 900 worlds have rock at all\n", rocky_worlds);
+}
+
 int main() {
+  test_rock_share();
   test_shape_irregular();
   test_determinism_and_reach();
   test_no_repeat_and_history();

@@ -130,11 +130,12 @@ static int elevation(int landform, int x, int y) {
   }
 }
 
+static int s_rock_e = 262;                    // elevation from which land is rock (7): only the highest peaks
 static int height_of(int e) {
   if (e < 60) return 0;
   if (e < 84) return 1;
   if (e < 100) return 2;
-  if (e >= 262) return 7;
+  if (e >= s_rock_e) return 7;
   return 3 + imin(3, (e - 100) / 40);
 }
 
@@ -180,6 +181,20 @@ static void despeckle(void) {
 
 // ------------------------------------------------------------------------------------------------ walking
 static int walk_ok(uint8_t b) { int h = MT_H(b); return h >= 2 && h <= 6 && MT_OBJ(b) == OB_NONE && MT_SOIL(b) != SOIL_BUILT; }
+// A step between neighbouring tiles is possible if they differ by at most one layer (r4: terraforming cuts cliffs, ramps mend them)
+int world_step_ok(int x, int y, int nx, int ny) {
+  if (nx < 0 || ny < 0 || nx >= WM || ny >= WM) return 0;
+  int d = MT_H(g_map[TI(x, y)]) - MT_H(g_map[TI(nx, ny)]);
+  return d >= -1 && d <= 1;
+}
+// Sets the layer of a tile. Water takes no objects; shallow and lower land lose their snow.
+void world_set_height(int x, int y, int h) {
+  if (x < 0 || y < 0 || x >= WM || y >= WM) return;
+  uint8_t b = g_map[TI(x, y)];
+  b = (uint8_t)((b & ~7) | (h & 7));
+  if (h < 3) b &= (uint8_t)~MT_SNOW;
+  g_map[TI(x, y)] = b;
+}
 int world_walkable(int tx, int ty) { return tx >= 0 && ty >= 0 && tx < WM && ty < WM && walk_ok(g_map[TI(tx, ty)]); }
 
 // Distance field in steps. world_flow_begin clears it, seeds are walkable tiles at distance 0 (or more), world_flow_run
@@ -195,14 +210,31 @@ void world_flow_run(void) {
         int i = dir ? WM * WM - 1 - k : k;
         if (!walk_ok(g_map[i])) continue;
         int x = i % WM, y = i / WM, m = g_dist[i];
-        if (x > 0 && g_dist[i - 1] + 1 < m) m = g_dist[i - 1] + 1;
-        if (x < WM - 1 && g_dist[i + 1] + 1 < m) m = g_dist[i + 1] + 1;
-        if (y > 0 && g_dist[i - WM] + 1 < m) m = g_dist[i - WM] + 1;
-        if (y < WM - 1 && g_dist[i + WM] + 1 < m) m = g_dist[i + WM] + 1;
+        int h = MT_H(g_map[i]);
+        if (x > 0 && g_dist[i - 1] + 1 < m && iabs(h - MT_H(g_map[i - 1])) <= 1) m = g_dist[i - 1] + 1;
+        if (x < WM - 1 && g_dist[i + 1] + 1 < m && iabs(h - MT_H(g_map[i + 1])) <= 1) m = g_dist[i + 1] + 1;
+        if (y > 0 && g_dist[i - WM] + 1 < m && iabs(h - MT_H(g_map[i - WM])) <= 1) m = g_dist[i - WM] + 1;
+        if (y < WM - 1 && g_dist[i + WM] + 1 < m && iabs(h - MT_H(g_map[i + WM])) <= 1) m = g_dist[i + WM] + 1;
         if (m < g_dist[i]) { g_dist[i] = (uint8_t)m; changed = 1; }
       }
     if (!changed) break;
   }
+}
+// The walkable tile closest to (x, y) (Manhattan rings); returns 0 if there is none
+int world_nearest_walkable(int x, int y, int* ox, int* oy) {
+  for (int r = 0; r < WM; r++)
+    for (int dy = -r; dy <= r; dy++)
+      for (int dx = -r; dx <= r; dx++) {
+        if (iabs(dx) + iabs(dy) != r) continue;
+        if (world_walkable(x + dx, y + dy)) { *ox = x + dx; *oy = y + dy; return 1; }
+      }
+  return 0;
+}
+// Goal: every walkable tile next to (tx, ty) (the tile itself is not a goal)
+void world_flow_adjacent(int tx, int ty) {
+  world_flow_begin();
+  world_flow_seed(tx - 1, ty, 0); world_flow_seed(tx + 1, ty, 0); world_flow_seed(tx, ty - 1, 0); world_flow_seed(tx, ty + 1, 0);
+  world_flow_run();
 }
 void world_flow(int tx, int ty) {
   world_flow_begin();
@@ -320,6 +352,20 @@ void world_generate(uint32_t seed, int landform, int climate) {
   int bias = 0, sea_edge = landform == LF_ISLAND || landform == LF_ARCH;
   for (int attempt = 0; attempt < 10; attempt++) {
     int land = 0;
+    {   // rock only on the highest peaks: at most 8% of the land (15% on the mountain plateau)
+      uint16_t hist[16];
+      int land_e = 0, rocky = 0;
+      for (int i = 0; i < 16; i++) hist[i] = 0;
+      for (int y = 0; y < WM; y++)
+        for (int x = 0; x < WM; x++) {
+          int e = elevation(landform, x, y) + bias;
+          if (e >= 100) land_e++;
+          if (e >= 262) { hist[imin(15, (e - 262) / 40)]++; rocky++; }
+        }
+      int quota = landform == LF_PLATEAU ? 10 : 4;
+      s_rock_e = 262;
+      for (int k = 0; k < 15 && rocky * 100 > quota * land_e; k++) { rocky -= hist[k]; s_rock_e += 40; }
+    }
     for (int y = 0; y < WM; y++)
       for (int x = 0; x < WM; x++) {
         int h = height_of(elevation(landform, x, y) + bias);

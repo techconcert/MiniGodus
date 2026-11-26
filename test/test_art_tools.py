@@ -58,7 +58,7 @@ def test_generators():
     check(art.build_shaman() == art.build_shaman(), "shaman deterministic")
     for cell in art.build_objects():
         check(all(0 <= v < 16 for r in cell for v in r), "object palette index")
-    check(len(art.build_shaman()) == 9 and len(art.build_hud()) == 4, "shaman 9 frames, 4 hud icons")
+    check(len(art.build_shaman()) == 15 and len(art.build_hud()) == 4, "shaman 15 frames (9 walking, 6 casting), 4 hud icons")
 
 
 def test_committed_sheets_match():
@@ -74,6 +74,12 @@ def test_committed_sheets_match():
           "assets/src/shaman.png is stale")
     hud = art.build_hud()
     check(sheet_pixels(os.path.join(src, "hud.png"), 8, 8, palette.RGB_TO_INDEX)[:len(hud)] == hud, "assets/src/hud.png is stale")
+    vcells, vids = art.build_village()
+    check(sheet_pixels(os.path.join(src, "village.png"), 16, 16, palette.WORLD_RGB_TO_INDEX)[:len(vcells)] == vcells,
+          "assets/src/village.png is stale: run python tools/make_world_art.py")
+    ids = open(os.path.join(ROOT, "lib", "gamecore", "src", "village_art_ids.h")).read()
+    for k, v in vids.items():
+        check(f"VA_{k} = {v}," in ids, f"village_art_ids.h is stale ({k})")
 
 
 def test_ids_header():
@@ -101,7 +107,8 @@ def test_png2tiles():
         committed = open(os.path.join(ROOT, "lib", "gamecore", "src", "assets_gen.h")).read()
         check(outs[0] == committed, "assets_gen.h is stale: run python tools/png2tiles.py")
         check(outs[0].count("GC_WPAL") >= 2 and "GC_QUARTS_CELLS" in outs[0], "world tables are generated")
-        # art budget: r1 carried 37.7 KB; r2 added about 10 KB; r3 adds the village, villager and tool sheets (about 4 KB)
+        # art budget: r1 carried 37.7 KB; r2 added about 10 KB; r3 the village, villager and tool sheets (about 4 KB); r4 the buildings
+        # up to 48x48, pen, orchard, construction and cast frames (about 6 KB). The sum below counts declarations and definitions.
         size = 0
         for m in re.finditer(r"const (?:uint8_t|uint16_t) (GC_\w+)\[([\d\]\[]+)\]", outs[0]):
             dims = [int(x) for x in re.findall(r"\d+", m.group(2))]
@@ -109,7 +116,7 @@ def test_png2tiles():
             for x in dims:
                 n *= x
             size += n * (2 if "uint16_t" in m.group(0) else 1)
-        check(size < 54 * 1024, f"art tables are {size} bytes, over the budget (40 KB art plus the carried-over sheets)")
+        check(size < 66 * 1024, f"art tables are {size} bytes, over the budget (40 KB art plus the carried-over sheets)")
 
 
 if __name__ == "__main__":

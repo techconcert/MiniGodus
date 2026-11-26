@@ -31,6 +31,7 @@ from palette import (PALETTE, CHAR_TO_INDEX, WORLD_REF, ROLES, R_AD, R_A, R_AL, 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 SRC = os.path.join(ROOT, "assets", "src")
 IDS = os.path.join(ROOT, "lib", "gamecore", "src", "world_art_ids.h")
+VILLAGE_IDS = os.path.join(ROOT, "lib", "gamecore", "src", "village_art_ids.h")
 
 # ------------------------------------------------------------------------------------------------ terrain quarters
 N = 8
@@ -637,17 +638,26 @@ class Pix:
         return ["".join(r) for r in self.p]
 
 
-def shaman_frame(facing, frame):
-    """A robed figure with a staff. frame 0 stands, 1 and 2 step (a bob and one boot planted)."""
+def shaman_frame(facing, frame, cast=0):
+    """A robed figure with a staff. frame 0 stands, 1 and 2 step (a bob and one boot planted).
+    cast 1 or 2: the staff is raised over the head and its orb glows (r4: terraforming)."""
     c = Pix()
     bob = -1 if frame else 0
     side = facing == "left"
     dx = 2 if side else 0            # the body leans to the right when seen from the side
     sx = 3 if side else 13          # the staff is held in front: left of a left-facing figure
     # staff and orb
-    for y in range(3 + bob, 15):
-        c.put(sx, y, "B")
-    c.span(1 + bob, sx - 1, sx + 1, "Y"); c.span(2 + bob, sx - 1, sx + 1, "Y"); c.put(sx - 1, 1 + bob, "o")
+    if cast:
+        bob = 0
+        for y in range(2, 15):
+            c.put(sx, y, "B")
+        c.span(0, sx - 1, sx + 1, "o" if cast == 1 else "Y"); c.span(1, sx - 1, sx + 1, "Y" if cast == 1 else "o")
+        c.put(sx - 2 if sx > 1 else sx + 2, 0, "o" if cast == 2 else "Y")
+        c.put(sx + 2 if sx < 14 else sx - 2, 1, "o" if cast == 1 else "Y")
+    else:
+        for y in range(3 + bob, 15):
+            c.put(sx, y, "B")
+        c.span(1 + bob, sx - 1, sx + 1, "Y"); c.span(2 + bob, sx - 1, sx + 1, "Y"); c.put(sx - 1, 1 + bob, "o")
     # hood
     for y, (x0, x1) in zip(range(3, 10), ((5, 8), (4, 9), (3, 10), (3, 10), (3, 10), (3, 10), (4, 9))):
         c.span(y + bob, x0 + dx, x1 + dx, "r")
@@ -661,9 +671,9 @@ def shaman_frame(facing, frame):
         c.span(6 + bob, 5, 8, "p"); c.span(7 + bob, 5, 8, "p"); c.span(8 + bob, 5, 8, "p")
         c.put(5, 7 + bob, "k"); c.put(8, 7 + bob, "k")
         c.span(9 + bob, 5, 8, "o"); c.span(10 + bob, 6, 7, "o")
-        c.put(12, 11 + bob, "p"); c.put(12, 12 + bob, "p")
+        c.put(12, (8 if cast else 11) + bob, "p"); c.put(12, (9 if cast else 12) + bob, "p")
     elif facing == "up":
-        c.put(12, 11 + bob, "p"); c.put(12, 12 + bob, "p")
+        c.put(12, (8 if cast else 11) + bob, "p"); c.put(12, (9 if cast else 12) + bob, "p")
         c.span(5 + bob, 5, 8, "r")
         for x in (5, 8):
             c.put(x, 8 + bob, "b")
@@ -671,7 +681,7 @@ def shaman_frame(facing, frame):
         c.span(6 + bob, 5, 6, "p"); c.span(7 + bob, 5, 6, "p"); c.span(8 + bob, 5, 6, "p")
         c.put(5, 7 + bob, "k")
         c.span(9 + bob, 5, 6, "o"); c.put(5, 10 + bob, "o")
-        c.put(4, 11 + bob, "p"); c.put(4, 12 + bob, "p")
+        c.put(4, (8 if cast else 11) + bob, "p"); c.put(4, (9 if cast else 12) + bob, "p")
     c.outline()
     # boots
     if frame == 0:
@@ -689,7 +699,9 @@ def px(rows):
 
 
 def build_shaman():
-    return [px(shaman_frame(f, fr)) for f in ("down", "up", "left") for fr in range(3)]
+    cells = [px(shaman_frame(f, fr)) for f in ("down", "up", "left") for fr in range(3)]
+    cells += [px(shaman_frame(f, 0, k)) for f in ("down", "up", "left") for k in (1, 2)]      # cast: 9..14
+    return cells
 
 
 # ------------------------------------------------------------------------------------------------ hud icons (master palette)
@@ -865,16 +877,265 @@ def b_fish():
     return c
 
 
+# r4: more buildings. Everything is painted with world palette slots: 1 outline, 4 pale, 5 white, 6 sand, 7 sand dark,
+# 8..12 greens, 13 earth, 14 rock, 15 shadow. A building of w x h tiles is one canvas of 16w x 16h pixels (up to 48x48)
+# that is cut into cells; the game draws cell (i, j) on tile (x + i, y + j).
+def roof_hip(c, x0, x1, top, eave, light, dark, mid=None):
+    """A hip roof from the ridge row `top` down to the eave row, wider than the walls by the caller's x0..x1."""
+    n = max(1, eave - top)
+    for y in range(top, eave + 1):
+        inset = (eave - y) * ((x1 - x0) // 2 - 2) // n
+        for x in range(x0 + inset, x1 - inset + 1):
+            col = light if x < (x0 + x1) // 2 else dark
+            if (y - top) % 3 == 2:
+                col = dark if x < (x0 + x1) // 2 else 15
+            elif mid and (x + y) % 5 == 0:
+                col = mid
+            c.set(x, y, col)
+    for x in range(x0, x1 + 1):
+        c.set(x, eave, 15)
+
+
+def walls(c, x0, y0, x1, y1, wall, shade, line=None):
+    c.rect(x0, y0, x1, y1, wall)
+    for y in range(y0, y1 + 1):
+        c.set(x1, y, shade); c.set(x1 - 1, y, shade)
+    for x in range(x0, x1 + 1):
+        c.set(x, y1, shade)
+    if line:
+        for y in range(y0 + 2, y1, 3):
+            for x in range(x0 + 1, x1 - 1):
+                if (x + y) % 4:
+                    c.set(x, y, line)
+
+
+def door(c, x, y1, w=5, h=9, col=15, inner=1):
+    c.rect(x, y1 - h, x + w - 1, y1, col)
+    c.rect(x + 1, y1 - h + 1, x + w - 2, y1, inner)
+
+
+def window(c, x, y, w=4, h=4):
+    c.rect(x, y, x + w - 1, y + h - 1, 15)
+    c.rect(x + 1, y + 1, x + w - 2, y + h - 2, 4)
+    c.set(x + 1, y + 1, 5)
+
+
+def house(wt, ht, kind):
+    c = Big(16 * wt, 16 * ht)
+    W, H = 16 * wt, 16 * ht
+    ground = H - 2
+    wall_top = H - 16 if ht == 2 else H - 20
+    if kind == "cottage":
+        walls(c, 4, wall_top, W - 5, ground, 14, 15, 15)
+        roof_hip(c, 1, W - 2, 3, wall_top, 13, 15, 7)
+        door(c, W // 2 - 3, ground)
+        for k in range(wt):
+            if wt == 3:
+                if k != 1:
+                    window(c, 8 + k * (W - 24) // 2, wall_top + 3)
+            else:
+                window(c, 6 + k * (W - 18), wall_top + 3)
+        c.rect(W - 11, 1, W - 8, wall_top // 2 + 2, 14); c.rect(W - 11, 1, W - 8, 1, 15)       # chimney
+        if ht == 3:
+            window(c, 6, wall_top + 12); window(c, W - 10, wall_top + 12)
+    elif kind == "manor":
+        walls(c, 3, wall_top, W - 4, ground, 5, 14, 14)
+        roof_hip(c, 0, W - 1, 2, wall_top, 13, 15, 7)
+        c.rect(W // 2 - 8, 2, W // 2 + 7, 14, 14)               # a central tower
+        roof_hip(c, W // 2 - 10, W // 2 + 9, 0, 10, 12, 8)
+        door(c, W // 2 - 3, ground, 7, 11)
+        for (x, y) in ((6, wall_top + 3), (W - 12, wall_top + 3), (6, wall_top + 14), (W - 12, wall_top + 14), (W // 2 - 14, wall_top + 14), (W // 2 + 10, wall_top + 14)):
+            window(c, x, y)
+        for x in range(4, W - 4, 4):
+            c.set(x, ground - 1, 7)
+    elif kind == "lumber":
+        walls(c, 3, wall_top, W - 4, ground, 13, 15, 15)
+        for y in range(wall_top + 1, ground, 3):
+            c.rect(3, y, W - 4, y, 7 if y % 2 else 13)
+        roof_hip(c, 0, W - 1, wall_top - 8, wall_top, 12, 9, 10)
+        door(c, 8, ground, 6, 9)
+        c.rect(W - 11, ground - 6, W - 6, ground - 1, 7)          # a woodpile
+        for x in range(W - 11, W - 5, 2):
+            c.set(x, ground - 4, 15); c.set(x + 1, ground - 2, 15)
+        c.line(W - 5, ground - 10, W - 5, ground - 3, 15); c.rect(W - 8, ground - 11, W - 5, ground - 10, 14)    # axe
+    elif kind == "granary":
+        walls(c, 3, wall_top, W - 4, ground, 7, 13, 13)
+        roof_hip(c, 0, W - 1, wall_top - 9, wall_top, 6, 7, 5)
+        c.rect(W // 2 - 4, wall_top + 3, W // 2 + 3, ground, 15)   # barn doors
+        c.rect(W // 2 - 3, wall_top + 4, W // 2 - 1, ground, 13); c.rect(W // 2, wall_top + 4, W // 2 + 2, ground, 13)
+        c.line(W // 2 - 3, wall_top + 4, W // 2 - 1, ground, 15); c.line(W // 2 + 2, wall_top + 4, W // 2, ground, 15)
+        for x in (6, W - 11):                                    # sacks
+            c.rect(x, ground - 5, x + 3, ground - 1, 6); c.set(x + 1, ground - 5, 5); c.set(x + 2, ground - 4, 7)
+    elif kind == "shrine":
+        c.rect(2, ground - 2, W - 3, ground, 14)                     # a stone base
+        c.rect(5, wall_top + 2, 8, ground - 3, 14); c.rect(W - 9, wall_top + 2, W - 6, ground - 3, 14)       # two pillars
+        c.rect(5, wall_top + 2, 5, ground - 3, 5); c.rect(W - 9, wall_top + 2, W - 9, ground - 3, 5)
+        roof_hip(c, 1, W - 2, wall_top - 8, wall_top + 3, 5, 14, 4)
+        c.rect(W // 2 - 3, wall_top + 8, W // 2 + 2, ground - 3, 15)   # dark opening and an altar flame
+        c.rect(W // 2 - 1, ground - 8, W // 2, ground - 4, 14)
+        c.set(W // 2 - 1, ground - 10, 6); c.set(W // 2, ground - 11, 5); c.set(W // 2, ground - 10, 6); c.set(W // 2 - 1, ground - 9, 7)
+    elif kind == "infirm":
+        walls(c, 3, wall_top, W - 4, ground, 5, 14, 14)
+        roof_hip(c, 0, W - 1, wall_top - 8, wall_top, 3, 2, 4)
+        door(c, 6, ground, 6, 9)
+        x = W - 12                                              # a blue cross
+        c.rect(x, wall_top + 3, x + 3, wall_top + 11, 3); c.rect(x - 3, wall_top + 6, x + 6, wall_top + 8, 3)
+        c.rect(x, wall_top + 3, x + 3, wall_top + 3, 4)
+    c.outline(1)
+    return c
+
+
+def b_orchard(stage):
+    c = Big(16, 16)
+    c.rect(7, 9, 8, 14, 13); c.set(8, 10, 15); c.set(8, 12, 15)         # trunk
+    crown = [(5, 2, 10, 3), (3, 3, 12, 8), (4, 9, 11, 9)]
+    if stage == 0:
+        crown = [(5, 5, 10, 6), (4, 6, 11, 8)]
+    for (x0, y0, x1, y1) in crown:
+        c.rect(x0, y0, x1, y1, 10 if stage == 0 else 9)
+    for (x, y) in ((6, 4), (9, 6), (5, 7), (10, 4)):
+        c.set(x, y, 11 if stage < 2 else 10)
+    if stage == 1:
+        for (x, y) in ((5, 5), (9, 3), (8, 7), (11, 6)):
+            c.set(x, y, 5)                                          # blossom
+    if stage == 2:
+        for (x, y) in ((5, 5), (9, 4), (8, 7), (11, 6), (6, 8)):
+            c.set(x, y, 6); c.set(x + 1, y, 7)                      # ripe fruit
+    c.rect(4, 15, 11, 15, 15)
+    c.outline(1)
+    return c.p
+
+
+def b_fence(kind):
+    """Pen fence on a transparent tile: kind is a 3x3 position index (0..8), the middle is open."""
+    c = Big(16, 16)
+    cx, cy = kind % 3, kind // 3
+    left, right, top, bottom = cx == 0, cx == 2, cy == 0, cy == 2
+    if top:
+        c.rect(0 if left else 0, 3, 15, 4, 13); c.rect(0, 5, 15, 5, 15)
+    if bottom:
+        c.rect(0, 12, 15, 13, 13); c.rect(0, 14, 15, 14, 15)
+    if left:
+        c.rect(2, 2 if top else 0, 3, 14 if bottom else 15, 13); c.rect(4, 5 if top else 0, 4, 14 if bottom else 15, 15)
+    if right:
+        c.rect(12, 2 if top else 0, 13, 14 if bottom else 15, 13); c.rect(14, 5 if top else 0, 14, 14 if bottom else 15, 15)
+    for (px_, py_, on) in ((2, 2, left and top), (13, 2, right and top), (2, 12, left and bottom), (13, 12, right and bottom)):
+        if on:
+            c.rect(px_ - 1, py_ - 1, px_ + 1, py_ + 2, 13); c.set(px_ - 1, py_ - 1, 7); c.set(px_, py_ - 1, 7)
+    c.outline(1)
+    return c.p
+
+
+def b_animal(kind, frame):
+    c = Big(16, 16)
+    y = 8 - frame
+    if kind == 0:            # sheep: a white woolly body
+        c.rect(4, y, 10, y + 4, 5); c.rect(5, y - 1, 9, y - 1, 5); c.rect(5, y + 4, 9, y + 4, 4)
+        c.rect(10, y + 1, 12, y + 3, 15); c.set(11, y + 1, 5)
+        c.set(5, y + 5, 15); c.set(9, y + 5, 15); c.set(5, y + 6, 15); c.set(9, y + 6, 15)
+    elif kind == 1:          # pig: sand coloured with a snout
+        c.rect(3, y + 1, 10, y + 5, 6); c.rect(4, y, 9, y, 6); c.rect(3, y + 5, 10, y + 5, 7)
+        c.rect(10, y + 1, 12, y + 4, 6); c.rect(12, y + 2, 13, y + 3, 7); c.set(11, y + 1, 1)
+        c.set(4, y + 6, 15); c.set(9, y + 6, 15); c.set(3, y + 2, 7)
+    else:                    # hen: small white body, a comb and a beak
+        c.rect(5, y + 2, 9, y + 5, 5); c.rect(9, y, 10, y + 2, 5); c.set(10, y - 1, 7); c.set(11, y + 1, 6)
+        c.set(10, y, 1); c.set(5, y + 3, 4); c.set(6, y + 3, 4); c.set(7, y + 6, 15); c.set(6, y + 6, 15)
+    c.outline(1)
+    return c.p
+
+
+def b_site(stage):
+    """Building site: stage 0 pegged ground, 1 timber frame, 2 walls half up with a ladder."""
+    c = Big(16, 16)
+    if stage == 0:
+        c.rect(1, 3, 14, 14, 13)
+        for (x, y) in ((1, 3), (14, 3), (1, 14), (14, 14)):
+            c.rect(x - 1 if x else 0, y - 3, x, y, 7)
+        c.line(1, 3, 14, 3, 6); c.line(1, 14, 14, 14, 6)
+        c.rect(4, 8, 9, 8, 7); c.rect(6, 10, 11, 10, 6)
+        for x in range(2, 14, 3):
+            c.set(x, 6, 15); c.set(x + 1, 12, 15)
+    elif stage == 1:
+        c.rect(1, 13, 14, 14, 15)
+        for x in (1, 7, 13):
+            c.rect(x, 3, x + 1, 14, 13); c.rect(x + 1, 3, x + 1, 14, 7)
+        c.rect(1, 3, 14, 4, 13); c.rect(1, 8, 14, 8, 7); c.line(1, 8, 7, 4, 7); c.line(7, 8, 13, 4, 7)
+    else:
+        c.rect(1, 6, 14, 14, 13)
+        for y in range(7, 14, 3):
+            c.rect(1, y, 14, y, 15)
+        for x in (1, 13):
+            c.rect(x, 1, x + 1, 6, 7)
+        c.rect(1, 1, 14, 2, 13); c.rect(5, 3, 6, 14, 7); c.rect(5, 3, 6, 3, 6); c.rect(9, 4, 9, 14, 7)
+        c.rect(10, 9, 13, 14, 15)
+    c.outline(1)
+    return c.p
+
+
+def b_ramp():
+    """A cut ramp: a packed earth wedge with steps, drawn over the cliff face."""
+    c = Big(16, 16)
+    for y in range(0, 16):
+        half = 3 + y * 5 // 15
+        for x in range(8 - half, 8 + half):
+            c.set(x, y, 6 if (y // 4) % 2 == 0 else 7)
+    for y in (3, 7, 11, 15):
+        for x in range(8 - (3 + y * 5 // 15), 8 + (3 + y * 5 // 15)):
+            c.set(x, y, 13)
+    for y in range(0, 16):
+        half = 3 + y * 5 // 15
+        c.set(8 - half, y, 15); c.set(8 + half - 1, y, 15)
+    return c.p
+
+
 def build_village():
-    cells = [b_tent(), b_tent(True), b_well()]
+    """Returns (cells, ids): ids maps a name to the first cell of its group (see village_art_ids.h)."""
+    cells, ids = [], {}
+
+    def add(name, group):
+        ids[name] = len(cells)
+        cells.extend(group)
+
+    add("TENT", [b_tent()])
+    add("WELL", [b_well()])
     hut = b_hut()
-    cells += [hut.cell(0, 0), hut.cell(1, 0), hut.cell(0, 1), hut.cell(1, 1)]
-    cells += [b_field(0), b_field(1), b_field(2)]
+    add("HUT", [hut.cell(0, 0), hut.cell(1, 0), hut.cell(0, 1), hut.cell(1, 1)])
+    add("FIELD", [b_field(0), b_field(1), b_field(2)])
     fish = b_fish()
-    cells += [fish.cell(0, 0), fish.cell(1, 0)]
+    add("FISH", [fish.cell(0, 0), fish.cell(1, 0)])
+    add("SITE", [b_site(0), b_site(1), b_site(2)])
+    add("ORCHARD", [b_orchard(0), b_orchard(1), b_orchard(2)])
+    add("FENCE", [b_fence(k) for k in range(9)])
+    add("ANIMAL", [b_animal(k, f) for k in range(3) for f in range(2)])
+    add("RAMP", [b_ramp()])
+
+    def grid(name, wt, ht, kind):
+        img = house(wt, ht, kind)
+        add(name, [img.cell(i, j) for j in range(ht) for i in range(wt)])
+
+    grid("COTTAGE_W", 3, 2, "cottage")     # cell = j * 3 + i
+    grid("COTTAGE_T", 2, 3, "cottage")     # cell = j * 2 + i
+    grid("MANOR", 3, 3, "manor")
+    grid("LUMBER", 2, 2, "lumber")
+    grid("GRANARY", 2, 2, "granary")
+    grid("SHRINE", 2, 2, "shrine")
+    grid("INFIRM", 2, 2, "infirm")
+    grid("INFIRM_W", 3, 2, "infirm")
     while len(cells) % 8:
         cells.append(Big(16, 16).p)
-    return cells
+    return cells, ids
+
+
+def write_village_ids(ids, count):
+    lines = ["// GENERATED by tools/make_world_art.py - do not edit by hand.",
+             "// First cell of each group of assets/src/village.png (GC_VILLAGE(id)). Multi-tile buildings: cell = id + j * width + i.",
+             "#pragma once", "enum {"]
+    for k, v in ids.items():
+        lines.append(f"  VA_{k} = {v},")
+    lines.append(f"  VA_COUNT = {count}")
+    lines.append("};")
+    with open(VILLAGE_IDS, "w") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 # ------------------------------------------------------------------------------------------------ villagers (master palette)
@@ -947,7 +1208,9 @@ def main():
     save_sheet(os.path.join(SRC, "objects.png"), build_objects(), 16, 16, 8, WORLD_REF)
     save_sheet(os.path.join(SRC, "shaman.png"), build_shaman(), 16, 16, 8, [rgb for _, _, rgb in PALETTE])
     save_sheet(os.path.join(SRC, "hud.png"), build_hud(), 8, 8, 4, [rgb for _, _, rgb in PALETTE])
-    save_sheet(os.path.join(SRC, "village.png"), build_village(), 16, 16, 8, WORLD_REF)
+    vcells, vids = build_village()
+    save_sheet(os.path.join(SRC, "village.png"), vcells, 16, 16, 8, WORLD_REF)
+    write_village_ids(vids, len(vcells))
     save_sheet(os.path.join(SRC, "villagers.png"), build_villagers(), 16, 16, 8, [rgb for _, _, rgb in PALETTE])
     save_sheet(os.path.join(SRC, "tools.png"), build_tools(), 8, 8, 8, [rgb for _, _, rgb in PALETTE])
     print(f"wrote terrain.png ({len(arts)} quarters, {an_count} animated), objects, shaman, hud, village, villagers, tools, world_art_ids.h")

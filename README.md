@@ -5,14 +5,15 @@ spends the faith that villagers produce to reshape the land and to lay out homes
 workshops. You never press anything: it is a clock with a little world in it. The full plan is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-**Status: release r3, the villagers.** A couple of villagers now live in the generated world and look after
-themselves: they eat three meals a day at 07:30, 12:30 and 19:00 of the clock's local time, drink, sleep when the clock's
-sleep schedule says so, grow up, have children, age and die. Every morning the adults get a job by need (farmer, fisher,
-lumberjack, builder, healer, water carrier; herders once pens exist), and the village builds itself: tents, huts, wheat
-fields, fishing huts and wells, on a site search that never cuts the map in two. Faith comes from awake adults and
-elders praying. The top bar shows one big counter at a time (faith, population, food, wood, 3 s each). The shaman
-wanders near the village. The recovery layer, update page, rescue hotspot, WiFi, weather, time zone, sleep schedule and
-flash saving are unchanged from r1. The faith economy that the shaman spends arrives in the next releases.
+**Status: release r4, the shaman builds.** The shaman now makes the decisions. Every 10 game minutes he scores the
+village's needs (food, housing, water, health, wood, growth, faith, monument), picks the most pressing project he can
+afford and carries it out one tile at a time: he walks beside the tile, raises his staff with sparkles, and the land changes
+by one layer, paid in faith. He levels plots, digs a pond when there is no coast, cuts ramps so that everything stays
+walkable, and lays out all thirteen buildings (tent, hut, cottage, manor, wheat field, orchard, animal pen, fishing hut, well,
+lumberjack hut, granary, shrine, infirmary) that the builders then construct in three visible stages. Villagers still eat
+three meals a day, drink, sleep on the clock's schedule, have children, age and die (r3). The bottom band shows his
+project. The recovery layer, update page, rescue hotspot, WiFi, weather, time zone, sleep schedule and flash saving are
+unchanged from r1.
 
 **Download:** every build of the `main` branch is published on the
 [Releases page](https://github.com/techconcert/MiniGodus/releases). Releases are named by number
@@ -111,6 +112,62 @@ so coasts and cliffs are irregular instead of nested rings, and a smoothing pass
 | ![](docs/screenshots/shape-before-archipelago-tropical.png) | ![](docs/screenshots/shape-after-archipelago-tropical.png) |
 
 The top bar: ![](docs/screenshots/topbar-counters.png)
+
+## The shaman (r4)
+
+![The shaman digging a pond](docs/screenshots/shaman-terraforming.png)
+
+| A pond dug on a world without a coast | The town on day 20 (island, temperate) |
+|---|---|
+| ![](docs/screenshots/pond.png) | ![](docs/screenshots/town-day20-island-temperate.png) |
+
+| Town on day 20, river valley, tropical | Town on day 20, lake basin, savanna |
+|---|---|
+| ![](docs/screenshots/town-day20-river-valley-tropical.png) | ![](docs/screenshots/town-day20-lake-basin-savanna.png) |
+
+| Town on day 20, mountain plateau, northern | |
+|---|---|
+| ![](docs/screenshots/town-day20-mountain-plateau-northern.png) | |
+
+**Needs and projects.** He scores food (less than 2 days of food, or too few fields), housing (fewer beds than people),
+water (a home with no water within 8 tiles), health (the first weak villager wants an infirmary; healing comes in r5),
+wood, growth (a new home tier unlocked: a flat 3x3 plot beside the homes first, then the home), faith (no shrine) and
+monument (a hook for r6). A pond has its own need when there is no coast. A world's seed decides his personality: farmer
+(green robe), herder (sand), fisher (blue), builder (red). It biases the scores and the choice of food building.
+
+**Terraforming.** One layer per cast. A step between two layers costs the number of the higher one, an object (tree,
+rock) costs 1, rock layer 7 is never touched (rock is only the highest peaks: at most about 4% of the land, 10% on a mountain plateau). Faith is paid when the staff comes down and never goes below zero. Near the
+village neighbouring tiles may differ by one layer only, and walking needs that too, so after a project he cuts ramps
+(a ramp sprite marks them) until there is no cliff left that blocks a path. Buildings stand on one layer between 3 and 5,
+never on the lowest land beside water and never on the keep-clear shore of a fishing hut; the site search takes the
+spot of lowest cost (faith to level and ramp, 2 per tile of walking from the green, reserved-tile penalties) and refuses
+any spot that would cut the village in two or shut another building in. Every single cast is checked as well: a step
+that would cut the village in two or shut a building in is left out. Faith (up to 9999) is not hoarded: when more than 40% of a
+reserve is spare he opens wide flat land around the green for the next tiers, towards forests and good soil, and digs a
+second pond for fish (LEVELLING LAND on the band). A building that trees have shut in gets its trees cleared.
+
+| Building | Size | From | Beds / yield |
+|---|---|---|---|
+| Tent | 1x1 | start | 2 beds |
+| Hut | 2x2 | 6 villagers | 4 beds |
+| Cottage | 3x2 or 2x3 | 14 | 6 beds |
+| Manor | 3x3 | 24 | 8 beds |
+| Wheat field | 2x2 to 3x3 | start | 8 grain per harvest |
+| Orchard | 3x2 or 2x3 | 8 | 8 fruit per harvest |
+| Animal pen | 3x2 to 3x3 | 10 | up to 10 animals (sheep, pigs, chickens), they breed when fed; a herder gets food from them |
+| Fishing hut | 2x1 or 1x2 | on a shore | fish |
+| Well | 1x1 | start | water |
+| Lumberjack hut | 2x2 | 4 | more wood per tree |
+| Granary | 2x2 | 10 | food cap +100 |
+| Shrine | 2x2 | 6 | +1 faith per half hour, praying elders count 3 |
+| Infirmary | 2x2 or 3x2 | first weak villager | r5 heals |
+
+A bigger home may replace tents and huts. Eating from three or more of the four food sources (grain, fruit, animal, fish)
+in one day makes the village content: 25% more faith until midnight.
+
+**Memory.** The shaman costs about 100 bytes of static RAM (project, reserved plots, last ramps) and the buildings table grew
+from 32 to 40 entries; every search shares the one distance buffer. The saved game (still 192 bytes, version 4) now keeps each building's
+size, but not the dug land: after a load the land is generated again and healed at once, free of charge.
 
 ## Hardware
 
@@ -252,7 +309,7 @@ Art: tiles and sprites are `assets/src/*.png` on a 16x16 grid with the 16-colour
 `python tools/make_world_art.py` (terrain quarters painted with roles, trees and boulders, the shaman, the top bar icons),
 which you can also edit by hand afterwards; the climate palettes are in `tools/palette.py` too. The README pictures come
 from `python tools/make_screenshots.py` (it builds `tools/shots.cpp`, a host renderer that uses the real game core).
-Python tests: `python3 test/test_art_tools.py`.
+Python tests: `python3 test/test_art_tools.py`. The r4 building sprites (`village.png`, ids in `village_art_ids.h`) are drawn by the same script.
 
 ## Repository layout
 
@@ -260,7 +317,8 @@ Python tests: `python3 test/test_art_tools.py`.
 firmware/        ESP8266 entry (main.cpp), ST7789 driver, recovery layer (safety.cpp, netwatch.cpp), prefs.cpp,
                  weather (wxnet.cpp), sleep schedule (nightmode.cpp), settings page (config.cpp), flash save (store.cpp)
 lib/gamecore/    portable game core (no heap, no libc), used by the firmware and the preview:
-                 world.cpp (generator, autotiler), godus.cpp (scene, camera, shaman, top bar)
+                 world.cpp (generator, autotiler), godus.cpp (scene, camera, shaman's walk and staff, top bar),
+                 village.cpp (villagers, buildings; shaman.inc.h is the shaman's brain: needs, site search, terraforming)
 lib/gqsafe/      pure decision code of the recovery layer (boot counters, WiFi ladder, upload checks)
 assets/src/      editable PNG sheets (terrain quarters, objects, shaman, icons, and the r1 sheets)
 tools/           asset converter, version stamp, .bin safety checks, source lint, CI guards

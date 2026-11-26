@@ -19,7 +19,7 @@ static void minute(int& wall) {
 static void check_sane() {
   int pop = vq(Q_POP);
   CHECK(pop >= 0 && pop <= 48);
-  CHECK(vq(Q_FOOD) <= 999 && vq(Q_WOOD) <= 999 && vq(Q_FAITH) <= 999);
+  CHECK(vq(Q_FOOD) <= 999 && vq(Q_WOOD) <= 999 && vq(Q_FAITH) <= 9999);
   int seen = 0;
   for (int i = 0; i < 48; i++) {
     int v = vq(Q_VIL + i);

@@ -1,4 +1,4 @@
-// MiniGodus scene (release r2): a generated 32x32 world, a camera that follows a placeholder shaman, the top bar with
+// MiniGodus scene (releases r2 and r4): a generated 32x32 world, a camera that follows a placeholder shaman, the top bar with
 // time, weather, temperature and the four resource counters, and the bottom band.
 // The villagers, buildings and faith economy arrive in later releases; the interface to the firmware stays.
 // Rules for the core: no heap, no libc, no floating point.
@@ -13,11 +13,14 @@ enum { BAND_STRIP = GC_ROWS - 1, MAP_STRIPS = 0x3FFE /* strips 1..13 */, MOVE_MS
 struct Shaman { int16_t x, y; uint8_t dir, step, moved, act, abed; };
 static Shaman   s_sh;                              // world pixels (the map is 512x512)
 static int16_t  s_mx, s_my;                        // pixel target of the step in progress
-static uint8_t  s_moving, s_walking, s_goal_x, s_goal_y;
+static uint8_t  s_moving, s_walking, s_goal_x, s_goal_y, s_goal_adj;
+static uint8_t  s_work, s_wtx, s_wty, s_applied, s_retry;       // the shaman's project: 1 walking beside the tile, 2 casting
+static int      s_cast, s_band_base;
+enum { CAST_MS = 800 };
 static int      s_cam_x, s_cam_y, s_cam_free;     // camera (top left, world pixels)
 static uint32_t s_move_acc, s_water_acc, s_band_acc, s_hud_acc, s_pause, s_play_ms;
 static uint8_t  s_hud_alt;
-static int      s_band_cur;                       // 0..3 status line, 4 = day line
+static int      s_band_cur;                       // 0..3 status line, 4 = day line, 5 = the shaman's project
 static int      s_last_min = -1;
 static uint8_t  s_going_to_bed;
 static int8_t   s_force_l = -1, s_force_c = -1;
@@ -34,10 +37,20 @@ static int cam_clamp_x(int v) { return v < 0 ? 0 : (v > WM_PIX - CAM_W ? WM_PIX 
 static int cam_clamp_y(int v) { return v < 0 ? 0 : (v > WM_PIX - CAM_H ? WM_PIX - CAM_H : v); }
 
 static void walk_to(int tx, int ty) {
-  s_goal_x = (uint8_t)tx; s_goal_y = (uint8_t)ty;
+  s_goal_x = (uint8_t)tx; s_goal_y = (uint8_t)ty; s_goal_adj = 0;
   world_flow(tx, ty);
   int cx = s_sh.x >> 4, cy = s_sh.y >> 4;
   s_walking = (g_dist[cy * WM + cx] != 255 && g_dist[cy * WM + cx] != 0) ? 1 : 0;
+}
+
+// Walk to a tile beside (tx, ty). Returns 0 if there is no way, 1 otherwise (s_walking says whether he has to move).
+static int walk_beside(int tx, int ty) {
+  s_goal_x = (uint8_t)tx; s_goal_y = (uint8_t)ty; s_goal_adj = 1;
+  world_flow_adjacent(tx, ty);
+  int cx = s_sh.x >> 4, cy = s_sh.y >> 4, d = g_dist[cy * WM + cx];
+  if (d == 255) { s_walking = 0; return 0; }
+  s_walking = d != 0;
+  return 1;
 }
 
 static void pick_wander_target(void) {
@@ -54,7 +67,7 @@ static void place_shaman(void) {
   s_sh.x = (int16_t)(bed_tx() * GC_TILE); s_sh.y = (int16_t)(bed_ty() * GC_TILE);
   s_sh.dir = DIR_DOWN; s_sh.step = s_sh.moved = 0;
   s_sh.act = GQ_ACT_WANDER; s_sh.abed = 0;
-  s_moving = s_walking = 0; s_pause = 1000; s_going_to_bed = 0;
+  s_moving = s_walking = 0; s_pause = 1000; s_going_to_bed = 0; s_work = 0; s_cast = 0; s_goal_adj = 0;
   s_cam_free = 0;
   s_cam_x = cam_clamp_x(s_sh.x + 8 - CAM_W / 2);
   s_cam_y = cam_clamp_y(s_sh.y + 8 - CAM_H / 2);
@@ -198,7 +211,7 @@ static void follow_camera(void) {
 
 // at a tile boundary: choose the next tile of the walk
 static void begin_step(void) {
-  world_flow(s_goal_x, s_goal_y);                    // g_dist is shared with the villagers: recompute for this step
+  if (s_goal_adj) world_flow_adjacent(s_goal_x, s_goal_y); else world_flow(s_goal_x, s_goal_y);     // g_dist is shared with the villagers: recompute for this step
   int tx = s_sh.x >> 4, ty = s_sh.y >> 4;
   int d = g_dist[ty * WM + tx];
   if (d == 0 || d == 255) { s_walking = 0; return; }
@@ -209,7 +222,7 @@ static void begin_step(void) {
     if (k > 0 && dd == (int)s_sh.dir) continue;
     int nx = tx + D[dd][0], ny = ty + D[dd][1];
     if (nx < 0 || ny < 0 || nx >= WM || ny >= WM) continue;
-    if (g_dist[ny * WM + nx] == d - 1) best = dd;
+    if (g_dist[ny * WM + nx] == d - 1 && world_step_ok(tx, ty, nx, ny)) best = dd;
   }
   if (best < 0) { s_walking = 0; return; }
   s_mx = (int16_t)((tx + D[best][0]) * GC_TILE); s_my = (int16_t)((ty + D[best][1]) * GC_TILE);
@@ -225,6 +238,7 @@ void world_tick(uint32_t dt) {
   int bed = want_bed();
   if (bed && s_sh.act != GQ_ACT_SLEEP && !s_going_to_bed) {
     s_going_to_bed = 1;
+    s_work = 0; if (s_sh.act == GQ_ACT_CAST) s_sh.act = GQ_ACT_WANDER;
     walk_to(bed_tx(), bed_ty());
   } else if (!bed && (s_sh.act == GQ_ACT_SLEEP || s_going_to_bed)) {
     s_going_to_bed = 0;
@@ -238,9 +252,27 @@ void world_tick(uint32_t dt) {
   while (s_move_acc >= MOVE_MS) {
     s_move_acc -= MOVE_MS;
     if (s_sh.act == GQ_ACT_SLEEP) continue;
+    if (s_sh.act == GQ_ACT_CAST) {       // the staff is raised: the tile changes halfway
+      if (s_cast > (int)MOVE_MS) {
+        s_cast -= MOVE_MS;
+        if (!s_applied && s_cast < CAST_MS / 2) { s_applied = 1; shaman_apply(); g_dirty |= MAP_STRIPS; }
+        if ((s_cast & 63) < MOVE_MS) mark_rows(s_wty * GC_TILE - s_cam_y + GC_STRIP_H - 6, 36);
+        continue;
+      }
+      if (!s_applied) { s_applied = 1; shaman_apply(); g_dirty |= MAP_STRIPS; }
+      s_sh.act = GQ_ACT_WANDER; s_pause = 120; s_cast = 0;
+      mark_rows(s_sh.y - s_cam_y + GC_STRIP_H - 18, 52);
+      continue;
+    }
     if (!s_moving) {
       if (s_walking) begin_step();
       if (!s_moving) {
+        {   // the ground may have been taken from under his feet (a new building, a pond)
+          int tx = s_sh.x >> 4, ty = s_sh.y >> 4, ox, oy;
+          if (!world_walkable(tx, ty) && !s_going_to_bed && world_nearest_walkable(tx, ty, &ox, &oy)) {
+            s_sh.x = (int16_t)(ox * GC_TILE); s_sh.y = (int16_t)(oy * GC_TILE); s_walking = 0; s_work = 0; g_dirty |= MAP_STRIPS;
+          }
+        }
         if (s_going_to_bed) {
           int tx = s_sh.x >> 4, ty = s_sh.y >> 4;
           if (tx == bed_tx() && ty == bed_ty()) {
@@ -251,7 +283,34 @@ void world_tick(uint32_t dt) {
           }
           continue;
         }
+        if (s_work == 1 && !s_walking) {            // arrived beside the tile: raise the staff
+          int tx = s_sh.x >> 4, ty = s_sh.y >> 4, dx = (int)s_wtx - tx, dy = (int)s_wty - ty;
+          if ((dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) == 1) {
+            s_sh.dir = (uint8_t)(dx > 0 ? DIR_RIGHT : (dx < 0 ? DIR_LEFT : (dy < 0 ? DIR_UP : DIR_DOWN)));
+            s_sh.act = GQ_ACT_CAST; s_cast = CAST_MS; s_applied = 0; s_work = 2;
+            mark_rows(s_sh.y - s_cam_y + GC_STRIP_H - 18, 52);
+            continue;
+          }
+          if (++s_retry > 3 || !walk_beside(s_wtx, s_wty)) { shaman_abort(); s_work = 0; }
+          continue;
+        }
+        if (s_work == 2) s_work = 0;
         if (s_pause > (uint32_t)MOVE_MS) { s_pause -= MOVE_MS; continue; }
+        {
+          int tx, ty;
+          if (shaman_target(s_sh.x >> 4, s_sh.y >> 4, &tx, &ty)) {
+            s_wtx = (uint8_t)tx; s_wty = (uint8_t)ty; s_retry = 0; s_work = 1;
+            if (!walk_beside(tx, ty)) {
+              // maybe he is shut in a pocket the village cannot reach: he steps back to his bed and tries again
+              world_flow(bed_tx(), bed_ty());
+              if (g_dist[(s_sh.y >> 4) * WM + (s_sh.x >> 4)] == 255) {
+                s_sh.x = (int16_t)(bed_tx() * GC_TILE); s_sh.y = (int16_t)(bed_ty() * GC_TILE); s_walking = 0; g_dirty |= MAP_STRIPS;
+              }
+              if (!walk_beside(tx, ty)) { shaman_abort(); s_work = 0; s_pause = 400; }
+            }
+            continue;
+          }
+        }
         s_pause = 800 + gc_rnd() % 2500;
         pick_wander_target();
         continue;
@@ -284,9 +343,13 @@ void world_tick(uint32_t dt) {
   s_band_acc += dt;
   if (s_band_acc >= BAND_MS) {
     s_band_acc -= BAND_MS;
-    for (int i = 0; i < 5; i++) {
-      s_band_cur = (s_band_cur + 1) % 5;
-      if (s_band_cur == 4 || g_status[s_band_cur][0]) break;
+    if (s_band_cur != 5 && shaman_label()) s_band_cur = 5;        // the project every other time
+    else {
+      for (int i = 0; i < 5; i++) {
+        s_band_base = (s_band_base + 1) % 5;
+        if (s_band_base == 4 || g_status[s_band_base][0]) break;
+      }
+      s_band_cur = s_band_base;
     }
     g_dirty |= 1u << BAND_STRIP;
   }
@@ -336,11 +399,12 @@ static void weather_icon(uint16_t* out, int y0, int x, int y, int w, int night) 
   }
 }
 
-static int put_num(char* p, int n) {      // 0..999
+static int put_num(char* p, int n) {      // 0..9999
   if (n < 0) n = 0;
-  if (n > 999) n = 999;
+  if (n > 9999) n = 9999;
   int k = 0;
-  if (n >= 100) p[k++] = (char)('0' + n / 100);
+  if (n >= 1000) p[k++] = (char)('0' + n / 1000);
+  if (n >= 100) p[k++] = (char)('0' + (n / 100) % 10);
   if (n >= 10) p[k++] = (char)('0' + (n / 10) % 10);
   p[k++] = (char)('0' + n % 10);
   p[k] = 0;
@@ -410,6 +474,9 @@ static void draw_band(uint16_t* out, int y0) {
     for (int i = 0; T[i]; i++) buf[p++] = T[i];
     for (int i = 0; g_world.name[i] && p < 38; i++) buf[p++] = g_world.name[i];
     buf[p] = 0;
+  } else if (s_band_cur == 5) {
+    const char* l = shaman_label();
+    str_copy(buf, l ? l : "", 32);
   } else {
     str_copy(buf, g_status[s_band_cur], 32);
   }
@@ -438,7 +505,26 @@ void world_render(int s, uint16_t* out) {
     } else {
       int row = s_sh.dir == DIR_RIGHT ? (int)DIR_LEFT : (int)s_sh.dir;
       int cell = (row == DIR_DOWN ? 0 : row == DIR_UP ? 3 : 6) + cycle[s_sh.step];
-      blit_sprite(out, wy0, sx, s_sh.y, GC_SHAMAN(cell), s_sh.dir == DIR_RIGHT, 0, g_act);
+      if (s_sh.act == GQ_ACT_CAST) cell = 9 + (row == DIR_DOWN ? 0 : row == DIR_UP ? 2 : 4) + ((s_cast / 160) & 1);
+      static const uint8_t ROBE[4] = {3, 7, 9, 12};              // farmer green, herder sand, fisher blue, builder red
+      uint8_t rm[16];
+      for (int k = 0; k < 16; k++) rm[k] = (uint8_t)k;
+      rm[12] = ROBE[shaman_pers() & 3];
+      blit_sprite(out, wy0, sx, s_sh.y, GC_SHAMAN(cell), s_sh.dir == DIR_RIGHT, rm, g_act);
+    }
+  }
+  if (s_sh.act == GQ_ACT_CAST) {              // sparkles round the tile that changes
+    int ox = s_wtx * GC_TILE - wx0, oy = s_wty * GC_TILE;
+    for (int k = 0; k < 7; k++) {
+      uint32_t h = (uint32_t)(k * 2654435761u) ^ (uint32_t)((s_cast / 80) * 40503u + 977u);
+      h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+      int px = ox - 2 + (int)(h % 20), py = oy - 2 - (int)((h >> 8) % 20) + 10 + (int)(((CAST_MS - s_cast) / 40) % 6) * -1;
+      uint16_t col = (h >> 17) & 1 ? g_act[P_WHITE] : g_act[P_YELLOW];
+      int dy = py - wy0;
+      if (dy >= 0 && dy < GC_STRIP_H && px >= 0 && px < GC_W) {
+        out[dy * GC_W + px] = col;
+        if (dy + 1 < GC_STRIP_H && (k & 1)) out[(dy + 1) * GC_W + px] = col;
+      }
     }
   }
   if (s_sh.act == GQ_ACT_SLEEP && s_sh.y - 14 < wy0 + GC_STRIP_H && s_sh.y + 2 > wy0)
@@ -558,6 +644,8 @@ void world_debug(int cmd, int32_t arg) {
     if (!seed) { gc_rnd(); seed = gc_rng_get() ^ s_next_seed; s_next_seed = s_next_seed * 1664525u + 1013904223u; }
     new_world(seed, 0);
   }
+  else if (cmd == GQ_DBG_FAITH) village_debug(4, arg);
+  else if (cmd == GQ_DBG_BAND) { s_band_cur = arg < 0 || arg > 5 ? 0 : arg; g_dirty |= 1u << BAND_STRIP; }
   else if (cmd == GQ_DBG_FOOD) village_debug(0, arg);
   else if (cmd == GQ_DBG_WOOD) village_debug(1, arg);
   else if (cmd == GQ_DBG_ADD_VILLAGERS) village_debug(2, arg);
