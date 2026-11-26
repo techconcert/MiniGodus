@@ -62,8 +62,8 @@ def main():
         sheet.paste(b, (0, k * 18))
     sheet.resize((sheet.width * 3, sheet.height * 3), Image.NEAREST).save(os.path.join(OUT, "topbar-counters.png"))
     # r4: the shaman terraforming (band: his project), a pond dug on a world without a coast, and the town on day 20
-    shot("screen", os.path.join(OUT, "shaman-terraforming.png"), 5, 5, 0, 0, 2, 1, "cast", 200)
-    shot("screen", os.path.join(OUT, "pond.png"), 5, 5, 0, 0, 2, 1, "pond", 200)
+    shot("screen", os.path.join(OUT, "shaman-terraforming.png"), 1, 0, 0, 0, 2, 1, "cast", 200)
+    shot("screen", os.path.join(OUT, "pond.png"), 1, 5, 0, 0, 2, 1, "pond", 200)
     for lf, cl, seed in TOWNS:
         shot("screen", os.path.join(OUT, f"town-day20-{LANDFORMS[lf]}-{CLIMATES[cl]}.png"), seed, lf, cl, 0, 2, 19 * 1440 + 300, "town")
     os.remove(EXE)

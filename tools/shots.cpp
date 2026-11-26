@@ -49,12 +49,15 @@ int main(int argc, char** argv) {
         for (int i = 0; i < 8; i++) { gc_tick(500); if (mode[0] == 'c' && gc_query(GQ_Q_HERO_ACT) == GQ_ACT_CAST) break; }
         if (boost && m % 60 == 0) gc_debug(GQ_DBG_FAITH, (int)gc_query(GQ_Q_VILLAGE + 3) + boost);
       }
-      if (mode[0] == 'c') for (int i = 0; i < 2; i++) gc_tick(150);
+      if (mode[0] == 'c') gc_tick(120);
       gc_debug(GQ_DBG_BAND, 5);
     }
     if (mode[0] == 't') {
       int sx = (int)gc_query(GQ_Q_START_X), sy = (int)gc_query(GQ_Q_START_Y);
-      gc_debug(GQ_DBG_SET_CAM, (sx * 16 - 112) + 1024 * (sy * 16 - 96));
+      int px = sx * 16 - 112, py = sy * 16 - 96;
+      if (px < 0) px = 0;
+      if (py < 0) py = 0;
+      gc_debug(GQ_DBG_SET_CAM, px + 1024 * py);
     }
   }
   for (int i = 0; i < ticks * 4; i++) gc_tick(250);
