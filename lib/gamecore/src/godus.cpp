@@ -2,12 +2,12 @@
 // time, weather, temperature and the four resource counters, and the bottom band.
 // The villagers, buildings and faith economy arrive in later releases; the interface to the firmware stays.
 // Rules for the core: no heap, no libc, no floating point.
-#include "world.h"
+#include "village.h"
 
 GqState G;
 uint8_t g_wframe;
 
-enum { BAND_STRIP = GC_ROWS - 1, MAP_STRIPS = 0x3FFE /* strips 1..13 */, MOVE_MS = 25, WATER_MS = 600, BAND_MS = 3000, HUD_ALT_MS = 4000,
+enum { BAND_STRIP = GC_ROWS - 1, MAP_STRIPS = 0x3FFE /* strips 1..13 */, MOVE_MS = 25, WATER_MS = 600, BAND_MS = 3000, HUD_ALT_MS = 3000,
        CAM_W = GC_W, CAM_H = 13 * GC_STRIP_H };
 
 struct Shaman { int16_t x, y; uint8_t dir, step, moved, act, abed; };
@@ -22,8 +22,10 @@ static int      s_last_min = -1;
 static uint8_t  s_going_to_bed;
 static int8_t   s_force_l = -1, s_force_c = -1;
 static uint32_t s_next_seed = 0x2545F491u;
-// placeholder counters until the villagers arrive: faith, food, wood, population
-static const int16_t HUD_VAL[4] = {12, 30, 8, 2};
+// the four counters of the top bar, by icon id: faith, food, wood, population (village_stat numbers)
+static const uint8_t HUD_STAT[4] = {3, 1, 2, 0};
+
+void world_cam(int* x, int* y) { *x = s_cam_x; *y = s_cam_y; }
 
 static int  bed_tx(void) { return g_world.start_x; }
 static int  bed_ty(void) { return g_world.start_y; }
@@ -41,7 +43,7 @@ static void walk_to(int tx, int ty) {
 static void pick_wander_target(void) {
   int cx = s_sh.x >> 4, cy = s_sh.y >> 4;
   for (int tries = 0; tries < 6; tries++) {
-    int x = cx + (int)(gc_rnd() % 17) - 8, y = cy + (int)(gc_rnd() % 17) - 8;
+    int x = bed_tx() + (int)(gc_rnd() % 19) - 9, y = bed_ty() + (int)(gc_rnd() % 19) - 9;     // he stays near his village
     if (!world_walkable(x, y) || (x == cx && y == cy)) continue;
     walk_to(x, y);
     if (s_walking) return;
@@ -56,6 +58,7 @@ static void place_shaman(void) {
   s_cam_free = 0;
   s_cam_x = cam_clamp_x(s_sh.x + 8 - CAM_W / 2);
   s_cam_y = cam_clamp_y(s_sh.y + 8 - CAM_H / 2);
+  quarts_view(s_cam_x, s_cam_y);
 }
 
 static void reset_state(int keep_world) {
@@ -72,11 +75,12 @@ static void reset_state(int keep_world) {
 }
 
 // Generates the world for (seed, landform, climate) and puts the shaman in his bed spot.
-static void start_world(uint32_t seed, int landform, int climate) {
+static void start_world(uint32_t seed, int landform, int climate, int fresh) {
   G.s.seed = seed ? seed : 1;
   world_generate(G.s.seed, landform, climate);
   G.s.landform = g_world.landform; G.s.climate = g_world.climate;
   G.s.rng = gc_rng_get();
+  if (fresh) village_reset((int)seed);
   build_palettes();
   place_shaman();
   s_move_acc = s_water_acc = s_band_acc = s_hud_acc = 0;
@@ -96,7 +100,7 @@ static void new_world(uint32_t seed, int exact) {
   G.s.hist_seed[0] = seed; G.s.hist_land[0] = (uint8_t)l; G.s.hist_clim[0] = (uint8_t)c;
   if (G.s.hist_n < 4) G.s.hist_n++;
   G.s.day = 0; G.s.minute = 0; G.s.play_min = 0; s_play_ms = 0;
-  start_world(seed, l, c);
+  start_world(seed, l, c, 1);
   gq_touch();
 }
 
@@ -133,16 +137,32 @@ static int want_bed(void) {
   return is_night();
 }
 
+static int night_at(int m) {
+  if (G.sleep_mode == 2) return 1;
+  if (G.sleep_mode == 1) return 0;
+  return m >= GC_NIGHT_START_MIN || m < GC_NIGHT_END_MIN;
+}
+
 void world_clock_changed(void) {
   int m = g_hour * 60 + g_min;
   if (!g_clock_valid) return;
-  if (s_last_min >= 0 && m < s_last_min && s_last_min - m > 600) world_new_day();
+  int d = s_last_min >= 0 ? (m - s_last_min + 1440) % 1440 : 0;
+  if (d >= 1 && d <= 2) {                      // the village lives minute by minute; a longer jump is not played back
+    for (int k = 1; k <= d; k++) {
+      int mm = (s_last_min + k) % 1440;
+      if (mm == 0) world_new_day();
+      village_minute(mm, night_at(mm));
+    }
+  } else if (d > 2 && d < 720 && s_last_min + d >= 1440) {   // a forward jump over midnight is a new day; a jump back (time zone, NTP) is not
+    world_new_day();
+  }
   s_last_min = m;
   G.s.minute = (uint16_t)m;
 }
 
 void world_new_day(void) {
   if (G.s.day < 65535) G.s.day++;
+  village_new_day(want_bed());
   gq_touch();
   g_dirty |= 1u << BAND_STRIP;
 }
@@ -155,10 +175,9 @@ void world_weather_changed(void) { g_dirty |= 1u; }
 // ------------------------------------------------------------------- simulation
 static void mark_anim_strips(void) {
   int tx0 = s_cam_x >> 4, tx1 = (s_cam_x + CAM_W - 1) >> 4, ty0 = s_cam_y >> 4, ty1 = (s_cam_y + CAM_H - 1) >> 4;
-  uint32_t cols = 0;
-  for (int x = tx0; x <= tx1 && x < WM; x++) cols |= 1u << x;
   for (int y = ty0; y <= ty1 && y < WM; y++)
-    if ((uint32_t)quarts_anim_rows(y) & cols) mark_rows(y * GC_TILE - s_cam_y + GC_STRIP_H, GC_TILE);
+    for (int x = tx0; x <= tx1 && x < WM; x++)
+      if (quarts_tile_anim(x, y)) { mark_rows(y * GC_TILE - s_cam_y + GC_STRIP_H, GC_TILE); break; }
 }
 
 static void follow_camera(void) {
@@ -174,10 +193,12 @@ static void follow_camera(void) {
   sx = sx > 6 ? 6 : (sx < -6 ? -6 : sx);
   sy = sy > 6 ? 6 : (sy < -6 ? -6 : sy);
   s_cam_x += sx; s_cam_y += sy;
+  if (sx || sy) quarts_view(s_cam_x, s_cam_y);
 }
 
 // at a tile boundary: choose the next tile of the walk
 static void begin_step(void) {
+  world_flow(s_goal_x, s_goal_y);                    // g_dist is shared with the villagers: recompute for this step
   int tx = s_sh.x >> 4, ty = s_sh.y >> 4;
   int d = g_dist[ty * WM + tx];
   if (d == 0 || d == 255) { s_walking = 0; return; }
@@ -211,6 +232,7 @@ void world_tick(uint32_t dt) {
     g_dirty |= MAP_STRIPS;
   }
 
+  village_tick(dt, bed);
   int cam_moved = 0, sh_moved = 0;
   s_move_acc += dt;
   while (s_move_acc >= MOVE_MS) {
@@ -257,7 +279,7 @@ void world_tick(uint32_t dt) {
   }
 
   s_hud_acc += dt;
-  if (s_hud_acc >= HUD_ALT_MS) { s_hud_acc -= HUD_ALT_MS; s_hud_alt ^= 1; g_dirty |= 1u; }
+  if (s_hud_acc >= HUD_ALT_MS) { s_hud_acc -= HUD_ALT_MS; s_hud_alt = (uint8_t)((s_hud_alt + 1) & 3); g_dirty |= 1u; }
 
   s_band_acc += dt;
   if (s_band_acc >= BAND_MS) {
@@ -325,31 +347,24 @@ static int put_num(char* p, int n) {      // 0..999
   return k;
 }
 
-static void draw_icon(uint16_t* out, int y0, int x, int y, int id) {
+// Left: one of the four counters at a time, as tall as the clock: the 8x8 icon doubled to 16x16 and digits of the
+// clock's size. They cycle every 3 s: faith, population, food, wood.
+static void draw_counters(uint16_t* out, int y0) {
+  static const uint8_t ORDER[4] = {0, 3, 1, 2};         // icon ids: 0 faith, 1 food, 2 wood, 3 population
+  int id = ORDER[s_hud_alt & 3];
   const uint8_t* ic = GC_ICONS(id);
-  for (int r = 0; r < 8; r++) {
-    int py = y + r - y0;
+  for (int r = 0; r < 16; r++) {
+    int py = r - y0;
     if (py < 0 || py >= GC_STRIP_H) continue;
-    for (int c = 0; c < 8; c++) {
-      uint8_t v = GC_RD8(ic + r * 4 + (c >> 1));
-      uint8_t p = (c & 1) ? (v & 15) : (v >> 4);
-      if (p && x + c >= 0 && x + c < GC_W) out[py * GC_W + x + c] = g_ui[p];
+    for (int c = 0; c < 16; c++) {
+      uint8_t v = GC_RD8(ic + (r >> 1) * 4 + (c >> 2));
+      uint8_t p = ((c >> 1) & 1) ? (v & 15) : (v >> 4);
+      if (p) out[py * GC_W + 3 + c] = g_ui[p];
     }
   }
-}
-
-// Left: two of the four counters, swapped every 4 s (faith + population, then food + wood). 8x8 icon, 5x7 number.
-static void draw_counters(uint16_t* out, int y0) {
-  static const uint8_t PAIR[2][2] = {{0, 3}, {1, 2}};       // HUD_VAL / icon ids: 0 faith, 1 food, 2 wood, 3 population
-  int x = 4;
-  for (int k = 0; k < 2; k++) {
-    int id = PAIR[s_hud_alt][k];
-    char nb[5];
-    int len = put_num(nb, HUD_VAL[id]);
-    draw_icon(out, y0, x, 4, id);
-    draw_text(out, y0, x + 10, 4, nb, g_ui[P_WHITE], 1, 0);
-    x += 10 + len * 6 + 8;
-  }
+  char nb[5];
+  put_num(nb, village_stat(HUD_STAT[id]));
+  draw_text(out, y0, 23, 1, nb, g_ui[P_WHITE], 2, 0);
 }
 
 static void draw_top(uint16_t* out, int y0) {
@@ -412,6 +427,7 @@ void world_render(int s, uint16_t* out) {
   int wx0 = s_cam_x, wy0 = s_cam_y + y0 - GC_STRIP_H;
   quarts_render(out, wx0, wy0, g_wframe);
   draw_objects(out, wx0, wy0);
+  village_draw(out, wx0, wy0);
   // the shaman, and a Z over his head in bed
   int sx = s_sh.x - wx0;
   if (s_sh.y < wy0 + GC_STRIP_H && s_sh.y + 16 > wy0) {
@@ -464,6 +480,7 @@ extern "C" void gc_set_live_weather(int wx, int temp_c10, int flags) {
 extern "C" int gc_save_export(uint8_t* buf, int cap) {
   if (gc_scene_id() != GC_SCENE_VILLAGE || !buf || cap < GC_SAVE_BYTES) return 0;
   G.s.rng = gc_rng_get();
+  village_pack(G.s.reserved);
   G.s.seq++;
   G.s.crc32 = gq_save_crc((const uint8_t*)&G.s + 12, GQ_SAVE_SIZE - 12);
   const uint8_t* p = (const uint8_t*)&G.s;
@@ -478,7 +495,8 @@ extern "C" int gc_save_import(const uint8_t* buf, int len) {
   for (int i = 0; i < GQ_SAVE_SIZE; i++) p[i] = buf[i];
   gq_save_sanitize(&G.s);
   s_play_ms = 0;
-  start_world(G.s.seed, G.s.landform, G.s.climate);
+  start_world(G.s.seed, G.s.landform, G.s.climate, 0);
+  village_unpack(G.s.reserved);
   gc_rng_set(G.s.rng);
   return 1;
 }
@@ -487,7 +505,7 @@ extern "C" uint32_t gc_save_serial(void) { return G.serial; }
 
 extern "C" void gc_reset_game(void) {
   reset_state(1);
-  start_world(G.s.seed, G.s.landform, G.s.climate);
+  start_world(G.s.seed, G.s.landform, G.s.climate, 1);
 }
 
 extern "C" void gc_new_world(uint32_t seed) {
@@ -521,14 +539,10 @@ int32_t world_query(int key) {
     case GQ_Q_CAM_Y: return s_cam_y;
     case GQ_Q_START_X: return g_world.start_x;
     case GQ_Q_START_Y: return g_world.start_y;
-    case GQ_Q_START_AREA: {
-      int n = world_flood_area(g_world.start_x, g_world.start_y);
-      if (s_walking) world_flow(s_goal_x, s_goal_y);       // the flood reused the shaman's distance field
-      return n;
-    }
+    case GQ_Q_START_AREA: return world_flood_area(g_world.start_x, g_world.start_y);     // uses the shared g_dist: the shaman recomputes it per step
     case GQ_Q_MAP_HASH: return (int32_t)world_map_hash();
     case GQ_Q_HERO_ON_LAND: return world_walkable((s_sh.x + 8) >> 4, (s_sh.y + 8) >> 4) ? 1 : 0;
-    default: return 0;
+    default: return key >= GQ_Q_VILLAGE ? village_stat(key - GQ_Q_VILLAGE) : 0;
   }
 }
 
@@ -544,12 +558,17 @@ void world_debug(int cmd, int32_t arg) {
     if (!seed) { gc_rnd(); seed = gc_rng_get() ^ s_next_seed; s_next_seed = s_next_seed * 1664525u + 1013904223u; }
     new_world(seed, 0);
   }
+  else if (cmd == GQ_DBG_FOOD) village_debug(0, arg);
+  else if (cmd == GQ_DBG_WOOD) village_debug(1, arg);
+  else if (cmd == GQ_DBG_ADD_VILLAGERS) village_debug(2, arg);
+  else if (cmd == GQ_DBG_THIRST) village_debug(3, arg);
   else if (cmd == GQ_DBG_SET_SEED) new_world((uint32_t)arg, 1);
   else if (cmd == GQ_DBG_FORCE_LAND) s_force_l = (int8_t)(arg >= 0 && arg < LF_COUNT ? arg : -1);
   else if (cmd == GQ_DBG_FORCE_CLIM) s_force_c = (int8_t)(arg >= 0 && arg < CL_COUNT ? arg : -1);
   else if (cmd == GQ_DBG_SET_CAM) {
     s_cam_x = cam_clamp_x((int)(arg & 1023)); s_cam_y = cam_clamp_y((int)((arg >> 10) & 1023));
     s_cam_free = 1;
+    quarts_view(s_cam_x, s_cam_y);
     g_dirty |= MAP_STRIPS;
   }
 }

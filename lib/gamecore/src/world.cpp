@@ -7,8 +7,10 @@ WorldInfo g_world;
 uint8_t   g_dist[WM * WM];
 
 // per tile: four quarter art ids (NW, NE, SW, SE); the kind of the neighbour a quarter blends with follows from its art
-alignas(4) static uint8_t g_qa[WM * WM * 4];
-static uint32_t g_anim[WM];                 // bit x set: tile (x, row) has an animated quarter
+// Quarter art ids of a window of tiles around the camera only (a ring buffer, slot = (ty % WH) * WW + tx % WW).
+enum { WW = 16, WH = 14 };
+static uint8_t g_qa[WW * WH * 4];
+static int g_wx0 = -100, g_wy0 = -100;       // top left tile of the window (-100: nothing computed)
 static const uint16_t* s_pal;               // world palette (g_wpal): the role tables are computed per quarter, not stored
 
 static inline int TI(int x, int y) { return y * WM + x; }
@@ -60,26 +62,33 @@ void world_pick(uint32_t seed, int prev_l, int prev_c, int* landform, int* clima
 struct Shape { int cx, cy, rx, ry, side; int ax[3], ay[3], ar[3]; int n; };
 static Shape s_sh;
 
+// distance of the tile (x, y), pushed around by a domain warp of about +-5 tiles, from an ellipse: 1024 at its radius
+static int s_wx, s_wy;                       // warped position of the current tile in 1/16 tiles
+static void warp_at(int x, int y) {
+  s_wx = x * 16 + (vnoise(x * 16 / 7, y * 16 / 7, s_salt + 11) - 128) * 3 / 4 + (vnoise(x * 16 / 3, y * 16 / 3, s_salt + 13) - 128) / 4;
+  s_wy = y * 16 + (vnoise(x * 16 / 7 + 900, y * 16 / 7, s_salt + 12) - 128) * 3 / 4 + (vnoise(x * 16 / 3, y * 16 / 3 + 900, s_salt + 14) - 128) / 4;
+}
 static int d2of(int x, int y, int cx, int cy, int rx, int ry) {
-  int dx = x - cx, dy = y - cy;
-  return dx * dx * 1024 / (rx * rx) + dy * dy * 1024 / (ry * ry);
+  (void)x; (void)y;
+  int dx = s_wx - cx * 16, dy = s_wy - cy * 16;
+  return dx * dx * 4 / (rx * rx) + dy * dy * 4 / (ry * ry);
 }
 
 static void shape_init(int landform) {
   Shape& s = s_sh;
   s.cx = 16 + (int)(wrnd() % 5) - 2; s.cy = 16 + (int)(wrnd() % 5) - 2;
-  s.rx = 10 + (int)(wrnd() % 4); s.ry = 10 + (int)(wrnd() % 4);
+  s.rx = 12 + (int)(wrnd() % 4); s.ry = 12 + (int)(wrnd() % 4);
   s.side = (int)(wrnd() & 3);
   s.n = 0;
   if (landform == LF_ARCH) {
     int want = 2 + (int)(wrnd() & 1);
     for (int tries = 0; tries < 200 && s.n < want; tries++) {
       int x = 7 + (int)(wrnd() % 18), y = 7 + (int)(wrnd() % 18), ok = 1;
-      for (int i = 0; i < s.n; i++) { int dx = x - s.ax[i], dy = y - s.ay[i]; if (dx * dx + dy * dy < 13 * 13) ok = 0; }
+      for (int i = 0; i < s.n; i++) { int dx = x - s.ax[i], dy = y - s.ay[i]; if (dx * dx + dy * dy < 14 * 14) ok = 0; }
       if (!ok) continue;
-      s.ax[s.n] = x; s.ay[s.n] = y; s.ar[s.n] = 5 + (int)(wrnd() % 3); s.n++;
+      s.ax[s.n] = x; s.ay[s.n] = y; s.ar[s.n] = 8 + (int)(wrnd() % 2); s.n++;
     }
-    if (s.n < 2) { s.ax[0] = 9; s.ay[0] = 10; s.ar[0] = 6; s.ax[1] = 22; s.ay[1] = 22; s.ar[1] = 6; s.n = 2; }
+    if (s.n < 2) { s.ax[0] = 9; s.ay[0] = 10; s.ar[0] = 7; s.ax[1] = 22; s.ay[1] = 22; s.ar[1] = 7; s.n = 2; }
   } else if (landform == LF_PLATEAU) {
     s.rx = 10 + (int)(wrnd() % 3); s.ry = s.rx;
   } else if (landform == LF_LAKE) {
@@ -90,8 +99,9 @@ static void shape_init(int landform) {
 static int elevation(int landform, int x, int y) {
   const Shape& s = s_sh;
   int n = fbm(x, y, s_salt), nz = n - 128;
+  warp_at(x, y);
   switch (landform) {
-    case LF_ISLAND: return 232 - d2of(x, y, s.cx, s.cy, s.rx, s.ry) * 190 / 1024 + nz * 11 / 20;
+    case LF_ISLAND: return 256 - d2of(x, y, s.cx, s.cy, s.rx, s.ry) * 150 / 1024 + nz * 15 / 10;
     case LF_COAST: {
       int u = s.side == 0 ? x : s.side == 1 ? 31 - x : s.side == 2 ? y : 31 - y;
       return 30 + u * 7 + nz * 9 / 10;
@@ -105,8 +115,8 @@ static int elevation(int landform, int x, int y) {
     case LF_LAKE: return 36 + d2of(x, y, s.cx, s.cy, s.rx, s.ry) * 22 / 100 + nz * 45 / 100;
     case LF_ARCH: {
       int best = -300;
-      for (int i = 0; i < s.n; i++) best = imax(best, 232 - d2of(x, y, s.ax[i], s.ay[i], s.ar[i], s.ar[i]) * 20 / 100);
-      return best + nz * 5 / 10;
+      for (int i = 0; i < s.n; i++) best = imax(best, 250 - d2of(x, y, s.ax[i], s.ay[i], s.ar[i], s.ar[i]) * 11 / 100);
+      return best + nz * 12 / 10;
     }
     default: {   // plateau
       int d2 = d2of(x, y, s.cx, s.cy, s.rx, s.ry);
@@ -145,44 +155,39 @@ static void smooth_heights(void) {
   }
 }
 
+// Removes everything narrower than 2 tiles from every height band: a tile of height >= t with lower neighbours on both
+// sides (left and right, or above and below) is a ribbon, spike or pillar and is lowered; a lower tile between two
+// higher ones is a crack and is filled. Coasts and terraces end up at least 2 tiles wide.
+enum { LAND_TARGET = 54 };
+static void despeckle(void) {
+  for (int t = 7; t >= 1; t--)
+    for (int y = 0; y < WM; y++)
+      for (int x = 0; x < WM; x++) {
+        int h = hgt(x, y);
+        if (h < t) continue;
+        int l = x > 0 ? hgt(x - 1, y) : h, r = x < WM - 1 ? hgt(x + 1, y) : h, u = y > 0 ? hgt(x, y - 1) : h, d = y < WM - 1 ? hgt(x, y + 1) : h;
+        if ((l < t && r < t) || (u < t && d < t)) g_map[TI(x, y)] = (uint8_t)((g_map[TI(x, y)] & ~7) | (t - 1));
+      }
+  for (int t = 1; t <= 7; t++)
+    for (int y = 0; y < WM; y++)
+      for (int x = 0; x < WM; x++) {
+        int h = hgt(x, y);
+        if (h >= t) continue;
+        int l = x > 0 ? hgt(x - 1, y) : h, r = x < WM - 1 ? hgt(x + 1, y) : h, u = y > 0 ? hgt(x, y - 1) : h, d = y < WM - 1 ? hgt(x, y + 1) : h;
+        if ((l >= t && r >= t) || (u >= t && d >= t)) g_map[TI(x, y)] = (uint8_t)((g_map[TI(x, y)] & ~7) | t);
+      }
+}
+
 // ------------------------------------------------------------------------------------------------ walking
-static int walk_ok(uint8_t b) { int h = MT_H(b); return h >= 2 && h <= 6 && MT_OBJ(b) == OB_NONE; }
+static int walk_ok(uint8_t b) { int h = MT_H(b); return h >= 2 && h <= 6 && MT_OBJ(b) == OB_NONE && MT_SOIL(b) != SOIL_BUILT; }
 int world_walkable(int tx, int ty) { return tx >= 0 && ty >= 0 && tx < WM && ty < WM && walk_ok(g_map[TI(tx, ty)]); }
 
-// stack of tile numbers kept in the quarter table (it is rebuilt after generation anyway)
-static int flood(int sx, int sy, int mark) {
-  for (int i = 0; i < WM * WM; i++) g_dist[i] = 0;
-  if (!world_walkable(sx, sy)) return 0;
-  uint8_t* st = g_qa;
-  int sp = 0, count = 0;
-  st[0] = (uint8_t)TI(sx, sy); st[1] = (uint8_t)(TI(sx, sy) >> 8); sp = 1;
-  g_dist[TI(sx, sy)] = 1;
-  static const int8_t D[4][2] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
-  while (sp) {
-    sp--;
-    int t = st[sp * 2] | (st[sp * 2 + 1] << 8);
-    count++;
-    int x = t % WM, y = t / WM;
-    for (int d = 0; d < 4; d++) {
-      int nx = x + D[d][0], ny = y + D[d][1];
-      if (!world_walkable(nx, ny) || g_dist[TI(nx, ny)]) continue;
-      g_dist[TI(nx, ny)] = 1;
-      st[sp * 2] = (uint8_t)TI(nx, ny); st[sp * 2 + 1] = (uint8_t)(TI(nx, ny) >> 8); sp++;
-    }
-  }
-  (void)mark;
-  return count;
-}
-int world_flood_area(int tx, int ty) {
-  int n = flood(tx, ty, 0);
-  quarts_rebuild(0, 0, WM - 1, WM - 1);      // the flood used the quarter table as its stack
-  return n;
-}
-
-void world_flow(int tx, int ty) {
-  for (int i = 0; i < WM * WM; i++) g_dist[i] = 255;
-  if (!world_walkable(tx, ty)) return;
-  g_dist[TI(tx, ty)] = 0;
+// Distance field in steps. world_flow_begin clears it, seeds are walkable tiles at distance 0 (or more), world_flow_run
+// relaxes it. The target of world_flow itself may be a tile nobody can stand on (a building): its walkable neighbours
+// are then the goal, at distance 0.
+void world_flow_begin(void) { for (int i = 0; i < WM * WM; i++) g_dist[i] = 255; }
+void world_flow_seed(int tx, int ty, int d) { if (tx >= 0 && ty >= 0 && tx < WM && ty < WM && world_walkable(tx, ty)) g_dist[TI(tx, ty)] = (uint8_t)d; }
+void world_flow_run(void) {
   for (int pass = 0; pass < 120; pass++) {
     int changed = 0;
     for (int dir = 0; dir < 2; dir++)
@@ -198,6 +203,29 @@ void world_flow(int tx, int ty) {
       }
     if (!changed) break;
   }
+}
+void world_flow(int tx, int ty) {
+  world_flow_begin();
+  if (tx < 0 || ty < 0 || tx >= WM || ty >= WM) return;
+  if (world_walkable(tx, ty)) world_flow_seed(tx, ty, 0);
+  else { world_flow_seed(tx - 1, ty, 0); world_flow_seed(tx + 1, ty, 0); world_flow_seed(tx, ty - 1, 0); world_flow_seed(tx, ty + 1, 0); }
+  world_flow_run();
+}
+
+// Occupies (on) a tile with a building: no object, nobody walks there.
+void world_set_built(int tx, int ty, int on) {
+  if (tx < 0 || ty < 0 || tx >= WM || ty >= WM) return;
+  uint8_t& b = g_map[TI(tx, ty)];
+  if (on) b = (uint8_t)((b & 0x0F) | (SOIL_BUILT << 4)); else b = (uint8_t)(b & 0x0F);
+}
+void world_clear_object(int tx, int ty) { if (tx >= 0 && ty >= 0 && tx < WM && ty < WM) g_map[TI(tx, ty)] &= 0x3F; }
+
+// Walkable tiles connected to (tx, ty). Uses the shared distance buffer g_dist like every other search.
+int world_flood_area(int tx, int ty) {
+  world_flow(tx, ty);
+  int n = 0;
+  for (int i = 0; i < WM * WM; i++) if (g_dist[i] != 255) n++;
+  return n;
 }
 
 // ------------------------------------------------------------------------------------------------ names
@@ -252,7 +280,7 @@ static int find_start(int* ox, int* oy, int cross) {
         if (x < 0 || y < 0 || x >= WM || y >= WM) continue;
         if (imax(iabs(x - cx), iabs(y - cy)) != r || !is_flat(x, y, cross)) continue;
         tried++;
-        int a = flood(x, y, 0);
+        int a = world_flood_area(x, y);
         if (a > best) { best = a; *ox = x; *oy = y; }
         if (a >= 60) return a;
       }
@@ -288,9 +316,21 @@ void world_generate(uint32_t seed, int landform, int climate) {
   s_rng = hash32(seed ^ 0xa511e9b3U) | 1;
   s_salt = hash32(seed + 77);
   shape_init(landform);
-  for (int y = 0; y < WM; y++)
-    for (int x = 0; x < WM; x++) g_map[TI(x, y)] = (uint8_t)height_of(elevation(landform, x, y));
-  smooth_heights();
+  // islands and archipelagos are raised until about half of the map is land, with open sea along the border
+  int bias = 0, sea_edge = landform == LF_ISLAND || landform == LF_ARCH;
+  for (int attempt = 0; attempt < 10; attempt++) {
+    int land = 0;
+    for (int y = 0; y < WM; y++)
+      for (int x = 0; x < WM; x++) {
+        int h = height_of(elevation(landform, x, y) + bias);
+        if (sea_edge && (x < 2 || y < 2 || x >= WM - 2 || y >= WM - 2)) h = 0;
+        g_map[TI(x, y)] = (uint8_t)h;
+        land += h >= 3;
+      }
+    if (!sea_edge || land * 100 >= WM * WM * LAND_TARGET) break;
+    bias += 14;
+  }
+  for (int pass = 0; pass < 2; pass++) { despeckle(); smooth_heights(); }
 
   // ground: snow caps in the north, fertile soil by the water, dry soil on the savanna
   for (int y = 0; y < WM; y++)
@@ -332,7 +372,7 @@ void world_generate(uint32_t seed, int landform, int climate) {
       if (x >= 0 && y >= 0 && x < WM && y < WM) g_map[TI(x, y)] &= 0x3F;
   g_world.start_x = (uint8_t)sx; g_world.start_y = (uint8_t)sy;
   make_name(seed);
-  quarts_rebuild(0, 0, WM - 1, WM - 1);
+  g_wx0 = g_wy0 = -100;                      // the caller sets the view (quarts_view) once the camera is placed
 }
 
 uint32_t world_map_hash(void) {
@@ -351,7 +391,7 @@ static int fill_art(int kind, int x, int y, int q, int soil) {
   if (kind <= 1) return ART_FILL_WATER + (int)(h % 4) * 2;
   if (kind == 2) return ART_FILL_SAND + (int)(h % 4);
   if (kind == 7) return ART_FILL_ROCK + (int)(h % 4);
-  if (kind == KIND_SNOW) return ART_FILL_SNOW + (int)(h % 3);
+  if (kind >= KIND_SNOW) return ART_FILL_SNOW + (int)(h % 3);
   int r = (int)(h % 16);
   if (soil == SOIL_DRY) return ART_FILL_GROUND + (r < 8 ? 0 : (r < 13 ? 1 : 2));
   if (soil == SOIL_FERTILE) return ART_FILL_GROUND + (r < 3 ? 0 : r < 5 ? 1 : r < 8 ? 2 : r < 11 ? 3 : r < 13 ? 4 : 5);
@@ -407,7 +447,7 @@ static int quarter_art(int x, int y, int qx, int qy, int* other) {
     return base + shape_of(bh, bv) * step;
   }
   // same height: a snow edge
-  if (kx == KIND_SNOW || MT_SNOW & (nb[0] | nb[1] | nb[2])) {
+  if ((bx | nb[0] | nb[1] | nb[2]) & MT_SNOW) {
     int diff[3];
     int any = 0;
     for (int i = 0; i < 3; i++) { diff[i] = ((nb[i] & MT_SNOW) != 0) != ((bx & MT_SNOW) != 0); any |= diff[i]; }
@@ -422,64 +462,89 @@ static int quarter_art(int x, int y, int qx, int qy, int* other) {
   return fill_art(kx, x, y, q, soil);
 }
 
-void quarts_rebuild(int x0, int y0, int x1, int y1) {
-  x0 = imax(0, x0 - 1); y0 = imax(0, y0 - 1); x1 = imin(WM - 1, x1 + 1); y1 = imin(WM - 1, y1 + 1);
-  for (int y = y0; y <= y1; y++) {
-    for (int x = x0; x <= x1; x++) {
-      int i = TI(x, y), oth[4];
-      uint32_t anim = 0;
-      for (int q = 0; q < 4; q++) {
-        int a = quarter_art(x, y, q & 1, q >> 1, &oth[q]);
-        g_qa[i * 4 + q] = (uint8_t)a;
-        if (a < ART_AN_COUNT) anim = 1;
-      }
-      if (anim) g_anim[y] |= 1u << x; else g_anim[y] &= ~(1u << x);
-    }
-  }
+static void window_tile(int x, int y) {
+  int i = ((y % WH) * WW + (x % WW)) * 4, dummy;
+  for (int q = 0; q < 4; q++) g_qa[i + q] = (uint8_t)quarter_art(x, y, q & 1, q >> 1, &dummy);
 }
 
-int quarts_anim_rows(int ty) { return (ty >= 0 && ty < WM) ? (int)g_anim[ty] : 0; }
+// Moves the window to cover the camera; only the tiles that come into view are computed.
+void quarts_view(int cam_x, int cam_y) {
+  int nx = (cam_x >> 4) < WM - WW ? (cam_x >> 4) : WM - WW, ny = (cam_y >> 4) < WM - WH ? (cam_y >> 4) : WM - WH;
+  if (nx < 0) nx = 0;
+  if (ny < 0) ny = 0;
+  if (nx == g_wx0 && ny == g_wy0) return;
+  int full = g_wx0 < -50 || iabs(nx - g_wx0) >= WW || iabs(ny - g_wy0) >= WH;
+  for (int y = ny; y < ny + WH; y++)
+    for (int x = nx; x < nx + WW; x++)
+      if (full || x < g_wx0 || x >= g_wx0 + WW || y < g_wy0 || y >= g_wy0 + WH) window_tile(x, y);
+  g_wx0 = nx; g_wy0 = ny;
+}
+
+// The map changed in the tiles x0..x1, y0..y1 (inclusive): recompute them and their neighbours where they are in the window.
+void quarts_rebuild(int x0, int y0, int x1, int y1) {
+  if (g_wx0 < -50) return;
+  x0 = imax(g_wx0, x0 - 1); y0 = imax(g_wy0, y0 - 1); x1 = imin(g_wx0 + WW - 1, x1 + 1); y1 = imin(g_wy0 + WH - 1, y1 + 1);
+  for (int y = y0; y <= y1; y++)
+    for (int x = x0; x <= x1; x++) window_tile(x, y);
+}
+
+static inline int in_window(int x, int y) { return g_wx0 >= -50 && x >= g_wx0 && x < g_wx0 + WW && y >= g_wy0 && y < g_wy0 + WH; }
+
+// 1 if tile (x, y) has a shimmering quarter
+int quarts_tile_anim(int x, int y) {
+  for (int q = 0; q < 4; q++) {
+    int a;
+    if (in_window(x, y)) a = g_qa[((y % WH) * WW + (x % WW)) * 4 + q];
+    else { int d; a = quarter_art(x, y, q & 1, q >> 1, &d); }
+    if (a < ART_AN_COUNT) return 1;
+  }
+  return 0;
+}
 
 // Role lookup for a quarter of a tile of kind `own` that blends with kind `oth`: role 1..13 -> RGB565.
 // roles: 1 A dark, 2 A, 3 A light, 4 B dark, 5 B, 6 B light, 7 rim dark, 8 rim light, 9 face dark, 10 face, 11 face light, 12 sparkle, 13 shadow
 static void role_table(uint16_t* l, int own, int oth) {
   static const uint8_t RAMP[KIND_COUNT][3] = {
-    {2, 2, 3}, {2, 3, 4}, {7, 6, 6}, {8, 9, 10}, {9, 10, 11}, {10, 11, 12}, {11, 12, 12}, {15, 14, 4}, {4, 5, 5}};
+    {2, 2, 3}, {2, 3, 4}, {7, 6, 6}, {8, 9, 10}, {9, 10, 11}, {10, 11, 12}, {11, 12, 12}, {15, 14, 6},
+    {11, 12, 4}, {12, 4, 5}, {4, 5, 5}};            // 8..10: snow on height <= 4 (thin, over green), 5 (icy), 6 (white)
+  static const uint8_t KH[KIND_COUNT] = {0, 1, 2, 3, 4, 5, 6, 7, 4, 5, 6};    // height of a kind
   const uint16_t* pal = s_pal;
   const uint8_t* a = RAMP[own]; const uint8_t* b = RAMP[oth];
-  int upper = own > oth ? own : oth;                 // which tile owns the cliff face material
-  int upk = (own == KIND_SNOW || oth == KIND_SNOW) ? KIND_SNOW : upper;
-  int rock = (upper == 7);
+  int up = KH[own] > KH[oth] ? own : (KH[own] < KH[oth] ? oth : (own >= KIND_SNOW ? own : oth));   // owner of the cliff face
+  int rock = (up == 7);
+  int snowy = up >= KIND_SNOW;
   int shore = own <= 1 || oth <= 1;
   l[0] = pal[0];
   l[1] = pal[a[0]]; l[2] = pal[a[1]]; l[3] = pal[a[2]];
   l[4] = pal[b[0]]; l[5] = pal[b[1]]; l[6] = pal[b[2]];
   l[7] = pal[shore ? 7 : 15];
   l[8] = pal[5];
-  l[9] = pal[15]; l[10] = pal[rock ? 14 : 13]; l[11] = pal[rock ? 4 : (upk == KIND_SNOW ? 5 : 7)];
-  l[12] = pal[own == KIND_SNOW ? 4 : 5];
+  // face: shadow, earth or rock, and a warm lip (white under snow, never the water-like pale blue)
+  l[9] = pal[15]; l[10] = pal[rock ? 14 : 13]; l[11] = pal[snowy ? 5 : (rock ? 6 : 7)];
+  l[12] = pal[own == 9 ? 5 : (own >= KIND_SNOW ? 4 : 5)];
   l[13] = pal[15];
   l[14] = l[2]; l[15] = l[2];
 }
 
 void quarts_palette(const uint16_t* pal) { s_pal = pal; }
 
-// The kind of neighbour a quarter blends with, from its art (fill art: none)
-static int other_kind(int art, int own, int h) {
+// The kind of neighbour a quarter blends with, from its art (fill art: none). snow: the tile is snow covered.
+static int other_kind(int art, int own, int h, int snow) {
+  int lower = snow && h - 1 >= 5 ? snow_kind(h - 1) : (h > 0 ? h - 1 : 0);
+  int upper = snow ? snow_kind(h < 6 ? h + 1 : 6) : (h < 7 ? h + 1 : 7);
   if (art < ART_FILL_GROUND) {
     if (art < ART_WATER_UP) return own;
     if (art < ART_WATER_LOW) return 0;
-    if (art < ART_SHORE_UP) return 1;
     if (art < ART_SHORE_LOW) return 1;
     return 2;
   }
   if (art < ART_BEACH_UP) return own;
   if (art < ART_BEACH_LOW) return 2;
   if (art < ART_SNOW_UP) return 3;
-  if (art < ART_SNOW_LOW) return h;
-  if (art < ART_UPN) return KIND_SNOW;
-  if (art < ART_LON) return h > 0 ? h - 1 : 0;
-  return h < 7 ? h + 1 : 7;
+  if (art < ART_SNOW_LOW) return h;                // snow beside grass of the same height
+  if (art < ART_UPN) return snow_kind(h);          // grass beside snow
+  if (art < ART_LON) return lower;
+  return upper;
 }
 
 // Draws the quarters of the strip (240x16) whose top is world pixel row wy0 and whose left is world column wx0.
@@ -495,10 +560,12 @@ void quarts_render(uint16_t* out, int wx0, int wy0, int frame) {
       int c0 = px < 0 ? -px : 0, c1 = px + 8 > GC_W ? GC_W - px : 8;
       int tx = qx >> 1, qxi = qx & 1, i = TI(tx, ty);
       int q = qyi * 2 + qxi;
-      int art = g_qa[i * 4 + q];
+      int art;
+      if (in_window(tx, ty)) art = g_qa[((ty % WH) * WW + (tx % WW)) * 4 + q];
+      else { int d; art = quarter_art(tx, ty, qxi, qyi, &d); }
       if (art < ART_AN_COUNT) art |= frame;
       int own = map_kind(g_map[i]);
-      int oth = other_kind(art & ~(art < ART_AN_COUNT ? 1 : 0), own, MT_H(g_map[i]));
+      int oth = other_kind(art & ~(art < ART_AN_COUNT ? 1 : 0), own, MT_H(g_map[i]), (g_map[i] & MT_SNOW) != 0);
       if (own != lut_own || oth != lut_oth) { role_table(lut, own, oth); lut_own = own; lut_oth = oth; }
       const uint8_t* src = GC_QUARTS(art);
       for (int r = r0; r < r1; r++) {

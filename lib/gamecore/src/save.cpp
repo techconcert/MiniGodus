@@ -36,8 +36,7 @@ void gq_save_sanitize(GqSave* s) {
   if (s->rng == 0) s->rng = 0x1234567u;
   if (s->seed == 0) s->seed = 1;
   if (s->minute > 1439) s->minute = 1439;
-  for (int i = 0; i < (int)sizeof(s->reserved); i++) s->reserved[i] = 0;
-  s->pad0 = 0;
+  s->pad0 = 0;                // reserved holds the village; village_unpack checks it itself
   if (s->hist_n > 4) s->hist_n = 4;
   for (int i = 0; i < 4; i++) {
     if (s->hist_land[i] >= LF_COUNT) s->hist_land[i] = 0;

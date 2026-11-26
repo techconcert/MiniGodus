@@ -11,6 +11,11 @@ terrain.png   8x8 quarter tiles painted with ROLES (tools/palette.py), not colou
 objects.png   16x16 trees, bushes, boulders and fish painted with the temperate world palette.
 shaman.png    16x16 robed figure with a staff (master palette): down 0-2, up 3-5, left 6-8, right = left mirrored.
 hud.png       8x8 icons of the top bar (master palette): flame, wheat, log, person.
+village.png   16x16 buildings of the village (world palette): tent, building site, well, hut (2x2 cells), wheat field
+              in 3 growth stages, fishing hut (2x1 cells).
+villagers.png 16x16 villagers (master palette): adult down 0-2, up 3-5, left 6-8, child 9-11. The tunic (colour 'W') and
+              the hair ('b') are recoloured by the game per role and age.
+tools.png     8x8 tools held by the villagers (master palette): hoe, crook, rod, axe, hammer, herb, bucket.
 Running this overwrites the PNGs; once they exist you may also edit them by hand.
 """
 import math
@@ -704,6 +709,236 @@ def build_hud():
     return out
 
 
+# ------------------------------------------------------------------------------------------------ village (world palette)
+class Big:
+    """Pixel canvas of any size in world palette indices; 0 = transparent."""
+    def __init__(self, w, h):
+        self.w, self.h = w, h
+        self.p = [[0] * w for _ in range(h)]
+
+    def set(self, x, y, c):
+        if 0 <= x < self.w and 0 <= y < self.h:
+            self.p[y][x] = c
+
+    def get(self, x, y):
+        return self.p[y][x] if 0 <= x < self.w and 0 <= y < self.h else 0
+
+    def rect(self, x0, y0, x1, y1, c):
+        for y in range(y0, y1 + 1):
+            for x in range(x0, x1 + 1):
+                self.set(x, y, c)
+
+    def line(self, x0, y0, x1, y1, c):
+        n = max(abs(x1 - x0), abs(y1 - y0), 1)
+        for i in range(n + 1):
+            self.set(round(x0 + (x1 - x0) * i / n), round(y0 + (y1 - y0) * i / n), c)
+
+    def outline(self, c=1):
+        add = []
+        for y in range(self.h):
+            for x in range(self.w):
+                if self.p[y][x] == 0 and any(self.get(x + dx, y + dy) not in (0, c) for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                    add.append((x, y))
+        for x, y in add:
+            self.p[y][x] = c
+
+    def cell(self, cx, cy):
+        return [row[cx * 16:(cx + 1) * 16] for row in self.p[cy * 16:(cy + 1) * 16]]
+
+
+def b_tent(site=False):
+    c = Big(16, 16)
+    if site:   # building site: four stakes, a rope and some planks on the ground
+        for (x, y) in ((2, 5), (13, 5), (2, 13), (13, 13)):
+            c.rect(x, y - 3, x, y + 1, 13)
+            c.set(x, y - 3, 7)
+        c.line(2, 5, 13, 5, 7); c.line(2, 13, 13, 13, 7); c.line(2, 5, 2, 13, 7); c.line(13, 5, 13, 13, 7)
+        c.rect(5, 9, 10, 9, 13); c.rect(6, 11, 11, 11, 7)
+        c.outline(1)
+        return c.p
+    for y in range(3, 14):                       # a hide tent: a triangle of cloth with a dark opening
+        half = (y - 3) * 6 // 10 + 1
+        for x in range(8 - half, 8 + half):
+            c.set(x, y, 6 if x < 8 else 7)
+    c.rect(7, 9, 8, 13, 15)
+    c.set(7, 8, 15); c.set(8, 8, 15)
+    c.line(8, 2, 8, 3, 13)
+    for y in range(4, 13, 3):                    # seams
+        c.set(8 - (y - 3) * 6 // 10, y, 7)
+        c.set(7 + (y - 3) * 6 // 10, y, 15)
+    c.outline(1)
+    for x in range(3, 13):
+        if (x) % 2 == 0 and c.get(x, 15) == 0:
+            c.set(x, 15, 15)
+    return c.p
+
+
+def b_well():
+    c = Big(16, 16)
+    c.rect(2, 8, 13, 13, 14)                     # stone ring
+    c.rect(2, 8, 13, 9, 4)
+    c.rect(3, 9, 12, 10, 3)                      # water
+    for x in range(2, 14):
+        c.set(x, 12, 15); c.set(x, 13, 15)
+    for x in (2, 5, 8, 11):
+        c.set(x, 11, 15)
+    c.rect(3, 2, 3, 8, 13); c.rect(12, 2, 12, 8, 13)     # posts and roof
+    c.rect(2, 1, 13, 2, 7); c.rect(2, 1, 13, 1, 6)
+    c.line(8, 2, 8, 5, 15); c.rect(7, 5, 9, 6, 13)       # rope and bucket
+    c.outline(1)
+    return c.p
+
+
+def b_hut():
+    c = Big(32, 32)
+    c.rect(5, 17, 26, 28, 13)                    # clay walls
+    for x in range(5, 27):
+        c.set(x, 28, 15)
+    for y in range(17, 29):
+        c.set(26, y, 15); c.set(25, y, 15)
+    for y in range(17, 29, 3):
+        for x in range(6, 25, 5):
+            c.set(x + (y // 3) % 2 * 2, y, 15)   # daub pattern
+    c.rect(13, 20, 18, 28, 15)                   # door
+    c.rect(14, 21, 17, 28, 1)
+    c.rect(7, 20, 10, 23, 15); c.rect(8, 21, 9, 22, 4)   # window
+    for y in range(3, 18):                       # thatched roof, wider than the walls
+        half = 5 + (y - 3) * 11 // 14
+        for x in range(16 - half, 16 + half + 1):
+            col = 6 if x < 16 else 7
+            if (x + y) % 3 == 0:
+                col = 7 if x < 16 else 15
+            c.set(x, y, col)
+    for x in range(1, 31):
+        if c.get(x, 17) != 0:
+            c.set(x, 17, 15)
+    c.rect(15, 1, 16, 3, 13)                     # ridge pole
+    c.outline(1)
+    for x in range(5, 28):
+        if (x % 2 == 0) and c.get(x, 31) == 0:
+            c.set(x, 31, 15)
+    return c
+
+
+def b_field(stage):
+    c = Big(16, 16)
+    c.rect(0, 0, 15, 15, 13)
+    for y in (1, 5, 9, 13):
+        c.rect(0, y, 15, y, 15)                  # furrows
+        c.rect(0, y + 1, 15, y + 1, 7 if stage == 0 else 13)
+    if stage == 0:
+        for (x, y) in ((3, 3), (9, 7), (12, 11), (5, 14), (1, 8)):
+            c.set(x, y, 7)
+    elif stage == 1:
+        for y in (2, 6, 10, 14):
+            for x in range(1, 16, 3):
+                c.set(x, y - 1, 10); c.set(x, y, 11)
+                c.set(x + 1, y, 9)
+    else:
+        for y in (2, 6, 10, 14):
+            for x in range(1, 16, 3):
+                c.rect(x, y - 3, x, y, 6)
+                c.set(x, y - 3, 5); c.set(x + 1, y - 2, 7); c.set(x - 1, y - 1, 7); c.set(x, y - 4 if y > 3 else y - 3, 6)
+    return c.p
+
+
+def b_fish():
+    c = Big(32, 16)
+    c.rect(2, 7, 12, 13, 13)                     # hut
+    c.rect(2, 7, 12, 7, 15)
+    for y in range(2, 8):
+        half = 2 + (7 - y) * 0 + (y - 2) * 5 // 5
+        for x in range(7 - half - 2, 7 + half + 3):
+            c.set(x, y, 6 if x < 7 else 7)
+    c.rect(6, 9, 8, 13, 15)
+    c.rect(13, 12, 31, 13, 13)                   # pier
+    for x in range(13, 32, 4):
+        c.rect(x, 13, x, 15, 15)
+    for x in range(14, 31, 4):
+        c.set(x, 12, 7)
+    c.line(24, 12, 28, 6, 15)                    # rod and a drying net
+    c.line(28, 6, 28, 10, 4)
+    c.rect(14, 8, 19, 11, 7)
+    for x in range(14, 20, 2):
+        c.set(x, 8, 5); c.set(x + 1, 10, 5)
+    c.outline(1)
+    return c
+
+
+def build_village():
+    cells = [b_tent(), b_tent(True), b_well()]
+    hut = b_hut()
+    cells += [hut.cell(0, 0), hut.cell(1, 0), hut.cell(0, 1), hut.cell(1, 1)]
+    cells += [b_field(0), b_field(1), b_field(2)]
+    fish = b_fish()
+    cells += [fish.cell(0, 0), fish.cell(1, 0)]
+    while len(cells) % 8:
+        cells.append(Big(16, 16).p)
+    return cells
+
+
+# ------------------------------------------------------------------------------------------------ villagers (master palette)
+def villager_frame(facing, frame, child=False):
+    """facing down / up / left. 'W' is the tunic and 'b' the hair: the game recolours them."""
+    c = Pix()
+    top = 6 if child else 2
+    side = facing == "left"
+    dx = 1 if side else 0
+    hh = 5
+    # head
+    c.span(top, 5 + dx, 9 + dx, "b"); c.span(top + 1, 4 + dx, 10 + dx, "b")
+    for y in range(top + 2, top + 5):
+        c.span(y, 5 + dx, 9 + dx, "p")
+    if facing == "down":
+        c.put(6, top + 3, "k"); c.put(8, top + 3, "k")
+    elif facing == "up":
+        c.span(top + 2, 4, 10, "b"); c.span(top + 3, 5, 9, "b")
+    else:
+        c.put(5, top + 3, "k"); c.span(top + 2, 8 + dx, 10 + dx, "b")
+    # body
+    by = top + 5
+    bh = 3 if child else 5
+    for y in range(by, by + bh):
+        c.span(y, 4 + dx, 10 + dx, "W")
+    c.span(by + bh - 2, 4 + dx, 10 + dx, "B")
+    c.put(3 + dx, by + 1, "p"); c.put(11 + dx, by + 1, "p")       # hands
+    # legs
+    ly = by + bh
+    legs = 15 - ly + 1
+    lf = ((0, 0), (1, 0), (0, 1))[frame]
+    for x0, off in ((5 + dx, lf[0]), (8 + dx, lf[1])):
+        for y in range(ly, 16 - (0 if not off else 1)):
+            c.span(y, x0, x0 + 1, "b")
+    c.outline()
+    return c.rows()
+
+
+def build_villagers():
+    cells = [px(villager_frame(f, fr)) for f in ("down", "up", "left") for fr in range(3)]
+    cells += [px(villager_frame("down", fr, True)) for fr in range(3)]
+    return cells
+
+
+TOOLS = [
+    ["......kk", ".....kBk", "....kB.k", "...kb...", "..kb....", ".kb.....", "kb......", "b......."],     # hoe
+    ["..kkk...", ".kBBBk..", ".kB.kBk.", "...kBBk.", "...kB...", "...kB...", "...kB...", "...kB..."],     # crook
+    ["........", "......kb", ".....kb.", "....kb.f", "...kb..f", "..kb...f", ".kb....W", "kb......"],        # fishing rod
+    ["..kkk...", ".kaaak..", ".kaaBk..", "..kkBk..", "....Bk..", "...Bk...", "..Bk....", ".Bk....."],       # axe
+    [".kkkkk..", ".kaaak..", ".kaaak..", ".kkBkk..", "...Bk...", "...Bk...", "...Bk...", "...kk..."],       # hammer
+    ["........", "..l.l...", ".lGlGl..", "..GGG...", "...G....", "..lGl...", "...G....", "...b...."],        # herb bundle
+    ["...kk...", "..k..k..", "..k..k..", ".kWWWWk.", ".kWWWWk.", ".kWfWWk.", "..kWWk..", "...kk..."],       # bucket
+    ["........"] * 8,
+]
+
+
+def build_tools():
+    out = []
+    for rows in TOOLS:
+        assert len(rows) == 8 and all(len(r) == 8 for r in rows)
+        out.append([[CHAR_TO_INDEX[ch] if ch != "." else 0 for ch in r] for r in rows])
+    return out
+
+
 def main():
     os.makedirs(SRC, exist_ok=True)
     arts, an_count = build_terrain()
@@ -712,7 +947,10 @@ def main():
     save_sheet(os.path.join(SRC, "objects.png"), build_objects(), 16, 16, 8, WORLD_REF)
     save_sheet(os.path.join(SRC, "shaman.png"), build_shaman(), 16, 16, 8, [rgb for _, _, rgb in PALETTE])
     save_sheet(os.path.join(SRC, "hud.png"), build_hud(), 8, 8, 4, [rgb for _, _, rgb in PALETTE])
-    print(f"wrote terrain.png ({len(arts)} quarters, {an_count} animated), objects.png, shaman.png, hud.png, world_art_ids.h")
+    save_sheet(os.path.join(SRC, "village.png"), build_village(), 16, 16, 8, WORLD_REF)
+    save_sheet(os.path.join(SRC, "villagers.png"), build_villagers(), 16, 16, 8, [rgb for _, _, rgb in PALETTE])
+    save_sheet(os.path.join(SRC, "tools.png"), build_tools(), 8, 8, 8, [rgb for _, _, rgb in PALETTE])
+    print(f"wrote terrain.png ({len(arts)} quarters, {an_count} animated), objects, shaman, hud, village, villagers, tools, world_art_ids.h")
 
 
 if __name__ == "__main__":

@@ -3,9 +3,11 @@
 // strip rendered at many camera positions under ASan/UBSan without leaving its buffer.
 #include "gq_test.h"
 #include "../lib/gamecore/src/gq_types.h"
+#include "../lib/gamecore/src/world.h"
 #include <set>
 #include <vector>
 #include <string>
+#include <cmath>
 
 static uint32_t rd32(const uint8_t* p) { return p[0] | (p[1] << 8) | (p[2] << 16) | ((uint32_t)p[3] << 24); }
 
@@ -155,7 +157,62 @@ static void test_idle_dirty() {
   CHECK(gc_dirty_mask() == 0);
 }
 
+// Shape of the land (r3 polish): islands and archipelagos cover about half the map and leave open sea along the border,
+// the coast is ragged, no height band is a near-axis-aligned rectangle (the nested square rings of r2) and nothing is
+// narrower than 2 tiles.
+static void test_shape_irregular() {
+  double sum_ratio[6] = {0}; int n[6] = {0};
+  long narrow = 0, worlds = 0;
+  for (uint32_t seed = 1; seed <= 120; seed++)
+    for (int lf = 0; lf < 6; lf++) {
+      world_generate(seed, lf, (int)(seed & 3));
+      worlds++;
+      int land = 0, shore = 0, per = 0, edge_land = 0;
+      for (int y = 0; y < WM; y++)
+        for (int x = 0; x < WM; x++) {
+          int h = MT_H(g_map[y * WM + x]);
+          if (h >= 2) shore++;
+          if (h >= 2 && (x < 2 || y < 2 || x >= WM - 2 || y >= WM - 2)) edge_land++;
+          for (int t = 1; t <= 7; t++) {      // ribbons, spikes and pillars narrower than 2 tiles
+            if (h < t) continue;
+            int l = x > 0 ? MT_H(g_map[y * WM + x - 1]) : h, r = x < WM - 1 ? MT_H(g_map[y * WM + x + 1]) : h;
+            int u = y > 0 ? MT_H(g_map[(y - 1) * WM + x]) : h, d = y < WM - 1 ? MT_H(g_map[(y + 1) * WM + x]) : h;
+            if ((l < t && r < t) || (u < t && d < t)) narrow++;
+          }
+          if (h < 3) continue;
+          land++;
+          static const int dx[4] = {1, -1, 0, 0}, dy[4] = {0, 0, 1, -1};
+          for (int k = 0; k < 4; k++) {
+            int a = x + dx[k], b = y + dy[k];
+            if (a < 0 || b < 0 || a >= WM || b >= WM || MT_H(g_map[b * WM + a]) < 3) per++;
+          }
+        }
+      if (lf == LF_ISLAND || lf == LF_ARCH) {
+        CHECK(shore * 100 >= WM * WM * 42 && shore * 100 <= WM * WM * 62);       // about half the map, beaches included
+        CHECK(edge_land == 0);                                                     // sea all round the border
+        CHECK(land >= 150);                                                        // room for the village
+      }
+      if (lf != LF_ISLAND && lf != LF_ARCH && lf != LF_PLATEAU) continue;
+      sum_ratio[lf] += (double)per / std::sqrt((double)land); n[lf]++;
+      // every height band from 4 up: how much of its bounding box it fills (a rectangle fills it all)
+      for (int h = 4; h <= 6; h++) {
+        int c = 0, x0 = WM, x1 = -1, y0 = WM, y1 = -1;
+        for (int y = 0; y < WM; y++)
+          for (int x = 0; x < WM; x++)
+            if (MT_H(g_map[y * WM + x]) >= h) { c++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+        if (c < 40) continue;
+        int box = (x1 - x0 + 1) * (y1 - y0 + 1);
+        CHECK(c * 100 < box * (lf == LF_ISLAND ? 91 : 96));
+      }
+    }
+  CHECK(sum_ratio[LF_ISLAND] / n[LF_ISLAND] > 4.8);          // r2's island: 4.57 with bands filling 95% of their box
+  CHECK(sum_ratio[LF_ARCH] / n[LF_ARCH] > 4.8);
+  CHECK(sum_ratio[LF_PLATEAU] / n[LF_PLATEAU] > 5.0);
+  CHECK(narrow < worlds * 3);                                 // a handful of tiles at most (the start carve and the height smoothing)
+}
+
 int main() {
+  test_shape_irregular();
   test_determinism_and_reach();
   test_no_repeat_and_history();
   test_render_everywhere();

@@ -33,7 +33,8 @@ enum {
   GQ_Q_START_AREA,      // walkable tiles connected to the start tile
   GQ_Q_MAP_HASH,        // FNV-1a over the 1024 map bytes
   GQ_Q_HERO_ON_LAND,    // 1 while the tile under the shaman's centre is one he may walk on
-  GQ_Q_COUNT
+  GQ_Q_COUNT,
+  GQ_Q_VILLAGE = 64     // GQ_Q_VILLAGE + n: village numbers (see village_stat in village.cpp: 0 population, 1 food, 2 wood, 3 faith, ...)
 };
 
 // ---- gc_debug commands (preview and tests)
@@ -42,13 +43,17 @@ enum { GQ_DBG_SET_DAY, GQ_DBG_NEXT_DAY, GQ_DBG_FORCE_ACT /*arg = GQ_ACT_**/,
        GQ_DBG_SET_SEED,       // arg = seed: exactly the world of that seed (no repeat rule), for the preview's seed picker
        GQ_DBG_FORCE_LAND,     // arg = landform for the next world, -1 = from the seed
        GQ_DBG_FORCE_CLIM,     // arg = climate for the next world, -1 = from the seed
-       GQ_DBG_SET_CAM };      // arg = x + 1024 * y (world pixels), clamped; the camera follows the shaman again after he moves
+       GQ_DBG_SET_CAM,
+       GQ_DBG_FOOD,           // arg = food stock
+       GQ_DBG_WOOD,           // arg = wood stock
+       GQ_DBG_ADD_VILLAGERS,  // arg = number of adults to add
+       GQ_DBG_THIRST };       // arg = thirst of every villager (0..31)      // arg = x + 1024 * y (world pixels), clamped; the camera follows the shaman again after he moves
 
 // ---- the saved state, 192 bytes, little-endian, no padding. The core only exports and imports bytes;
 // firmware/store.cpp keeps them in flash.
 #define GQ_SAVE_SIZE    192
 #define GQ_SAVE_MAGIC   0x444F474Du   // bytes "MGOD": MiniGodus (GeekQuest's is 0x53514747)
-#define GQ_SAVE_VERSION 2
+#define GQ_SAVE_VERSION 3
 typedef struct {
   uint32_t magic;            //   0
   uint16_t version;          //   4
