@@ -1,0 +1,3 @@
+SDP_MiniGodus_quest_1-ee2e18c.bin
+SDP_MiniGodus_test_1-ee2e18c.bin
+Flash only the files listed here. Files in firmware/obsolete are old.
