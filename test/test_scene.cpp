@@ -73,7 +73,8 @@ static void test_walk() {
     int x = (int)gc_query(GQ_Q_SHAMAN_X), y = (int)gc_query(GQ_Q_SHAMAN_Y);
     if (x != px || y != py) moved++;
     px = x; py = y;
-    CHECK(x >= 0 && x <= GC_W - 16 && y >= GC_TILE && y <= GC_H - 2 * GC_TILE);
+    CHECK(x >= 0 && x <= 512 - 16 && y >= 0 && y <= 512 - 16);      // world pixels; the map is 512x512
+    CHECK(gc_query(GQ_Q_HERO_ON_LAND) == 1);
   });
   CHECK(moved > 20);
   CHECK(frame_hash() != h0);

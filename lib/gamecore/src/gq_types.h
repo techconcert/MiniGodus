@@ -24,17 +24,31 @@ enum {
   GQ_Q_SHAMAN_X,        // shaman position in pixels
   GQ_Q_SHAMAN_Y,
   GQ_Q_SEED,            // world seed (saved)
+  GQ_Q_LANDFORM,        // 0 island, 1 coast, 2 river valley, 3 lake basin, 4 archipelago, 5 mountain plateau
+  GQ_Q_CLIMATE,         // 0 temperate, 1 savanna, 2 northern, 3 tropical
+  GQ_Q_CAM_X,           // camera, world pixels (map is 512x512)
+  GQ_Q_CAM_Y,
+  GQ_Q_START_X,         // start tile (the shaman's bed)
+  GQ_Q_START_Y,
+  GQ_Q_START_AREA,      // walkable tiles connected to the start tile
+  GQ_Q_MAP_HASH,        // FNV-1a over the 1024 map bytes
+  GQ_Q_HERO_ON_LAND,    // 1 while the tile under the shaman's centre is one he may walk on
   GQ_Q_COUNT
 };
 
 // ---- gc_debug commands (preview and tests)
-enum { GQ_DBG_SET_DAY, GQ_DBG_NEXT_DAY, GQ_DBG_FORCE_ACT /*arg = GQ_ACT_**/ };
+enum { GQ_DBG_SET_DAY, GQ_DBG_NEXT_DAY, GQ_DBG_FORCE_ACT /*arg = GQ_ACT_**/,
+       GQ_DBG_NEW_WORLD,      // arg = seed (0 = next random): a new world that never repeats the previous landform + climate
+       GQ_DBG_SET_SEED,       // arg = seed: exactly the world of that seed (no repeat rule), for the preview's seed picker
+       GQ_DBG_FORCE_LAND,     // arg = landform for the next world, -1 = from the seed
+       GQ_DBG_FORCE_CLIM,     // arg = climate for the next world, -1 = from the seed
+       GQ_DBG_SET_CAM };      // arg = x + 1024 * y (world pixels), clamped; the camera follows the shaman again after he moves
 
 // ---- the saved state, 192 bytes, little-endian, no padding. The core only exports and imports bytes;
 // firmware/store.cpp keeps them in flash.
 #define GQ_SAVE_SIZE    192
 #define GQ_SAVE_MAGIC   0x444F474Du   // bytes "MGOD": MiniGodus (GeekQuest's is 0x53514747)
-#define GQ_SAVE_VERSION 1
+#define GQ_SAVE_VERSION 2
 typedef struct {
   uint32_t magic;            //   0
   uint16_t version;          //   4
@@ -47,7 +61,12 @@ typedef struct {
   uint32_t seed;             //  28  world seed
   uint16_t day;              //  32
   uint16_t minute;           //  34
-  uint8_t  reserved[156];    //  36
+  uint8_t  landform, climate;//  36  current world (same as hist 0)
+  uint8_t  hist_n, pad0;     //  38  1..4 worlds remembered, newest first
+  uint32_t hist_seed[4];     //  40  the last 4 worlds: seed, landform, climate
+  uint8_t  hist_land[4];     //  56
+  uint8_t  hist_clim[4];     //  60
+  uint8_t  reserved[128];    //  64
 } GqSave;
 
 static_assert(sizeof(GqSave) == GQ_SAVE_SIZE, "GqSave must be 192 bytes");
@@ -57,7 +76,8 @@ static_assert(offsetof(GqSave, size) == 6, "size");
 static_assert(offsetof(GqSave, crc32) == 8, "crc32");
 static_assert(offsetof(GqSave, seq) == 12, "seq");
 static_assert(offsetof(GqSave, day) == 32, "day");
-static_assert(offsetof(GqSave, reserved) == 36, "reserved");
+static_assert(offsetof(GqSave, hist_seed) == 40, "hist_seed");
+static_assert(offsetof(GqSave, reserved) == 64, "reserved");
 
 typedef struct {
   GqSave   s;             // the saved part

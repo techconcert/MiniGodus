@@ -47,6 +47,7 @@ void draw_text_n(uint16_t* out, int y0, int x, int y, const char* s, int n, uint
 void render_ground_row(uint16_t* out, int s, uint8_t water_frame);
 
 // ---- the MiniGodus scene (godus.cpp) ----
+void build_palettes(void);
 void world_init(uint32_t seed);
 void world_tick(uint32_t dt);
 void world_render(int s, uint16_t* out);

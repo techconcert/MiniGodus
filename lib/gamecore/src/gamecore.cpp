@@ -4,10 +4,12 @@
 // identical on the ESP8266 and in the WebAssembly preview).
 #define GC_ASSETS_DEFINE 1   // this file owns the tile, sprite, item and font tables (assets_gen.h)
 #include "gc_internal.h"
+#include "world.h"
 
 uint8_t  g_ground[GC_ROWS][GC_COLS];
 uint8_t  g_obj[GC_ROWS][GC_COLS];
 uint16_t g_pal[16];
+uint16_t g_wpal[16];    // world palette of the current climate
 uint16_t g_act[16];     // palette for actors and items (wash and tint, no season remap)
 uint16_t g_ui[16];
 uint32_t g_dirty;
@@ -77,11 +79,13 @@ static uint16_t make_colour(uint16_t c) {
 }
 
 // Palette pipeline: base palette -> colour depth curve. (GeekQuest's day tint and season remap are not used yet.)
-static void build_palettes(void) {
+void build_palettes(void) {
   for (int i = 0; i < 16; i++) {
     g_ui[i] = g_act[i] = g_pal[i] = make_colour(GC_RD16(&GC_PALETTE[i]));
+    g_wpal[i] = make_colour(GC_RD16(&GC_WPAL[g_world.climate < CL_COUNT ? g_world.climate : 0][i]));
   }
-  g_pal[0] = g_ui[0] = g_act[0] = 0;
+  g_pal[0] = g_ui[0] = g_act[0] = g_wpal[0] = 0;
+  quarts_palette(g_wpal);
 }
 
 extern "C" void gc_set_depth(int percent) {

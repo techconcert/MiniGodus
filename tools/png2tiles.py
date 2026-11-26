@@ -14,22 +14,55 @@ import os
 import sys
 from PIL import Image
 
-from palette import PALETTE, RGB_TO_INDEX, rgb565
+from palette import PALETTE, RGB_TO_INDEX, rgb565, CLIMATES, WORLD_PALETTES, WORLD_RGB_TO_INDEX, ROLE_RGB_TO_INDEX
 from font5x7 import GLYPHS, FIRST, LAST
 
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 SRC = os.path.join(ROOT, "assets", "src")
-OUT = os.path.join(ROOT, "lib", "gamecore", "src", "assets_gen.h")
+OUT = os.environ.get("PNG2TILES_OUT") or os.path.join(ROOT, "lib", "gamecore", "src", "assets_gen.h")
 
 SHEETS = [
     # (file, C name)
     ("tiles.png", "TILES"),
     ("chars.png", "CHARS"),
     ("items.png", "ITEMS"),
+    ("objects.png", "OBJECTS", WORLD_RGB_TO_INDEX),
+    ("shaman.png", "SHAMAN"),
 ]
 
 
-def cut(path):
+# r2: world sheets. terrain.png has 8x8 cells painted with ROLES (stored as raw role numbers, GC_QUARTS), hud.png has
+# 8x8 icons of the master palette (GC_ICONS); objects.png is 16x16 and uses the temperate world palette (slot numbers).
+SHEETS8 = [
+    ("terrain.png", "QUARTS", ROLE_RGB_TO_INDEX),
+    ("hud.png", "ICONS", RGB_TO_INDEX),
+]
+
+
+def cut8(path, table):
+    img = Image.open(path).convert("RGB")
+    w, h = img.size
+    if w % 8 or h % 8:
+        sys.exit(f"{path}: size {w}x{h} is not a multiple of 8")
+    cells = []
+    for ty in range(h // 8):
+        for tx in range(w // 8):
+            data = bytearray()
+            for y in range(8):
+                for x in range(0, 8, 2):
+                    px = []
+                    for dx in (0, 1):
+                        rgb = img.getpixel((tx * 8 + x + dx, ty * 8 + y))
+                        if rgb not in table:
+                            sys.exit(f"{path}: pixel ({tx*8+x+dx},{ty*8+y}) colour {rgb} is not in its palette")
+                        px.append(table[rgb])
+                    data.append((px[0] << 4) | px[1])
+            cells.append(bytes(data))
+    return cells
+
+
+def cut(path, table=None):
+    table = table or RGB_TO_INDEX
     img = Image.open(path).convert("RGB")
     w, h = img.size
     if w % 16 or h % 16:
@@ -43,9 +76,9 @@ def cut(path):
                     px = []
                     for dx in (0, 1):
                         rgb = img.getpixel((tx * 16 + x + dx, ty * 16 + y))
-                        if rgb not in RGB_TO_INDEX:
+                        if rgb not in table:
                             sys.exit(f"{path}: pixel ({tx*16+x+dx},{ty*16+y}) colour {rgb} is not in the palette")
-                        px.append(RGB_TO_INDEX[rgb])
+                        px.append(table[rgb])
                     data.append((px[0] << 4) | px[1])
             cells.append(bytes(data))
     return cells, w // 16, h // 16
@@ -79,8 +112,9 @@ def main():
     # pass 1: cut all sheets, build the shared row table
     sheets = []
     rowtab, rowidx = [], {}
-    for fname, cname in SHEETS:
-        cells, cols, rows = cut(os.path.join(SRC, fname))
+    for entry in SHEETS:
+        fname, cname = entry[0], entry[1]
+        cells, cols, rows = cut(os.path.join(SRC, fname), entry[2] if len(entry) > 2 else None)
         uniq, index = [], []
         for c in cells:
             if c not in uniq:
@@ -117,6 +151,33 @@ def main():
         defs.append(f"const uint16_t GC_{cname}_CELLS[{len(uniq)}][16] GC_ROM_ATTR = {{")
         for i, c in enumerate(cellrows):
             defs.append("  {" + ",".join(str(v) for v in c) + f"}}, // distinct {i}")
+        defs.append("};")
+        defs.append(f"const uint8_t GC_{cname}_MAP[{len(cells)}] GC_ROM_ATTR = {{")
+        defs.append(c_bytes(bytes(index)))
+        defs.append("};")
+        defs.append("")
+
+    out.append(f"extern const uint16_t GC_WPAL[{len(CLIMATES)}][16];")
+    defs.append(f"const uint16_t GC_WPAL[{len(CLIMATES)}][16] GC_ROM_ATTR = {{")
+    for c in CLIMATES:
+        defs.append("  {" + ",".join(f"0x{rgb565(rgb):04x}" for rgb in WORLD_PALETTES[c]) + "}, // " + c)
+    defs.append("};")
+    defs.append("")
+    for fname, cname, table in SHEETS8:
+        cells = cut8(os.path.join(SRC, fname), table)
+        uniq, index = [], []
+        for c in cells:
+            if c not in uniq:
+                uniq.append(c)
+            index.append(uniq.index(c))
+        out.append(f"// {fname}: {len(cells)} cells of 8x8 (8 rows of 4 bytes), {len(uniq)} distinct")
+        out.append(f"#define GC_{cname}_COUNT {len(cells)}")
+        out.append(f"extern const uint8_t GC_{cname}_CELLS[{len(uniq)}][32];")
+        out.append(f"extern const uint8_t GC_{cname}_MAP[{len(cells)}];")
+        out.append(f"#define GC_{cname}(id) (GC_{cname}_CELLS[GC_RD8(&GC_{cname}_MAP[(id)])])")
+        defs.append(f"const uint8_t GC_{cname}_CELLS[{len(uniq)}][32] GC_ROM_ATTR = {{")
+        for i, c in enumerate(uniq):
+            defs.append("  {" + ",".join(f"0x{v:02x}" for v in c) + f"}}, // distinct {i}")
         defs.append("};")
         defs.append(f"const uint8_t GC_{cname}_MAP[{len(cells)}] GC_ROM_ATTR = {{")
         defs.append(c_bytes(bytes(index)))

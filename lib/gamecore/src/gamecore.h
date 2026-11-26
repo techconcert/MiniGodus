@@ -57,6 +57,13 @@ uint32_t gc_save_serial(void);                         // changes whenever the s
 // Day-1 defaults (same as a first boot).
 void     gc_reset_game(void);
 
+// ---- worlds (r2)
+// Start a new world from a seed. Its landform + climate pair is never the same as the previous world's (the last 4 worlds
+// are kept in the save). Same seed and same previous world give the same world. Day counter restarts at 0.
+void gc_new_world(uint32_t seed);
+// Name of the current world (A-Z, up to 10 characters) into buf (NUL terminated). Returns its length.
+int  gc_world_name(char* buf, int cap);
+
 // ---- environment
 enum { GC_NET_ONLINE = 0, GC_NET_OFFLINE = 1, GC_NET_AP_ONLY = 2 };
 enum { GC_OPT_CARD_PERIOD = 0, GC_OPT_NIGHT_QUIET = 1,

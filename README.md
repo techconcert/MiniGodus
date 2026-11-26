@@ -5,11 +5,12 @@ spends the faith that villagers produce to reshape the land and to lay out homes
 workshops. You never press anything: it is a clock with a little world in it. The full plan is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-**Status: release r1, the foundation.** The recovery layer, update page, rescue hotspot, WiFi,
-weather, time zone, sleep schedule and flash saving are all in place, but the game is a placeholder
-scene: a grass and water field with a little shaman who wanders and goes to bed, a top bar with the
-time, the day, the weather icon and the temperature, and a bottom band that cycles the status lines
-(IP address, rescue network, firmware version). The real world arrives in the next releases.
+**Status: release r2, the world.** The map now exists: a generated 32x32 world with stepped height layers, cliffs,
+beaches, shores and snow, in four climates, with a camera that follows the shaman (a placeholder that wanders
+on walkable ground and goes to bed). The top bar has the time, the weather and four counters (faith, food, wood,
+population, placeholder values until r3), the bottom band adds "DAY n OF <world name>". Villagers, buildings and the
+faith economy arrive in the next releases. The recovery layer, update page, rescue hotspot, WiFi, weather, time zone,
+sleep schedule and flash saving are unchanged from r1.
 
 **Download:** every build of the `main` branch is published on the
 [Releases page](https://github.com/techconcert/MiniGodus/releases). Releases are named by number
@@ -17,6 +18,54 @@ time, the day, the weather icon and the temperature, and a bottom band that cycl
 "Latest". Each release has the two firmware files, `preview.html` (the game in your browser)
 and `SHA256SUMS.txt`. The file names also carry the short commit, for example
 `SDP_MiniGodus_quest_1-1a2b3c4.bin`.
+
+## The world (r2)
+
+Every world is made from one 32-bit seed (the clock's hardware random number generator picks it; a given seed always
+gives the same world). The seed chooses one of six **landforms** and one of four **climates**, and a new world never
+has the same landform and climate as the world before it (the last 4 worlds are kept in the save).
+
+| Landform | Looks like |
+|---|---|
+| island | one island, terraces rising to the middle |
+| coast | the sea on one side, land rising inland |
+| river valley | a winding river with hills on both sides |
+| lake basin | a lake in a bowl of hills |
+| archipelago | 2 or 3 separate islands |
+| mountain plateau | a terraced plateau with rock, lowland around it |
+
+The map is 1 byte per tile: height 0 deep water, 1 shallow water, 2 beach, 3 to 6 land layers, 7 rock (unbuildable),
+plus snow cover, soil and an object (tree, bush or fish, boulder). Climates are temperate, savanna, northern (snow
+caps, pines) and tropical (palms); each has its own 16-colour palette, trees and resources.
+
+Screens of the clock itself (the game core run on a PC, `tools/make_screenshots.py`), and the whole map of each landform:
+
+| Island, temperate | Coast, tropical |
+|---|---|
+| ![Island](docs/screenshots/screen-island-temperate.png) | ![Coast](docs/screenshots/screen-coast-tropical.png) |
+| ![Island map](docs/screenshots/map-island-temperate.png) | ![Coast map](docs/screenshots/map-coast-tropical.png) |
+
+| River valley, savanna | Lake basin, northern |
+|---|---|
+| ![River valley](docs/screenshots/screen-river-valley-savanna.png) | ![Lake basin](docs/screenshots/screen-lake-basin-northern.png) |
+| ![River valley map](docs/screenshots/map-river-valley-savanna.png) | ![Lake basin map](docs/screenshots/map-lake-basin-northern.png) |
+
+| Archipelago, tropical | Mountain plateau, northern |
+|---|---|
+| ![Archipelago](docs/screenshots/screen-archipelago-tropical.png) | ![Plateau](docs/screenshots/screen-mountain-plateau-northern.png) |
+| ![Archipelago map](docs/screenshots/map-archipelago-tropical.png) | ![Plateau map](docs/screenshots/map-mountain-plateau-northern.png) |
+
+The four climates on the same island:
+
+| Temperate | Savanna | Northern | Tropical |
+|---|---|---|---|
+| ![](docs/screenshots/climate-temperate.png) | ![](docs/screenshots/climate-savanna.png) | ![](docs/screenshots/climate-northern.png) | ![](docs/screenshots/climate-tropical.png) |
+
+How it is drawn: every 16x16 tile is four 8x8 quarters. A quarter looks at its own tile and the three tiles that touch
+its corner and picks a piece of art for the pair of terrains (water/sand, sand/grass, grass/cliff, cliff/rock,
+grass/snow, deep/shallow water). That gives rounded coasts and curved cliff corners from about 70 small pieces
+of art. A step up draws a cliff face on its south side. The pieces are chosen once when the map changes, not per
+frame; the 13 map strips are then redrawn from those tables while the camera scrolls pixel by pixel.
 
 ## Hardware
 
@@ -149,22 +198,29 @@ python3 tools/check_bin_selftest.py
 
 Browser preview (clang with wasm32 and lld): `tools/build_preview.sh` writes `preview/dist/index.html`.
 The preview is the same game core as the clock, plus a debug panel that is not in the firmware:
-live weather, sleep mode, WiFi state, jump to a day, and time scale.
+a seed picker (type a seed and press **Load seed** to see exactly that world), a **New world** button (random seed,
+never the same landform and climate as before), menus to force a landform or climate, live weather, sleep mode,
+WiFi state, jump to a day, and time scale.
 
 Art: tiles and sprites are `assets/src/*.png` on a 16x16 grid with the 16-colour palette in
-`tools/palette.py`. After editing run `python tools/png2tiles.py`.
+`tools/palette.py`. After editing run `python tools/png2tiles.py`. The r2 world art is made by
+`python tools/make_world_art.py` (terrain quarters painted with roles, trees and boulders, the shaman, the top bar icons),
+which you can also edit by hand afterwards; the climate palettes are in `tools/palette.py` too. The README pictures come
+from `python tools/make_screenshots.py` (it builds `tools/shots.cpp`, a host renderer that uses the real game core).
+Python tests: `python3 test/test_art_tools.py`.
 
 ## Repository layout
 
 ```
 firmware/        ESP8266 entry (main.cpp), ST7789 driver, recovery layer (safety.cpp, netwatch.cpp), prefs.cpp,
                  weather (wxnet.cpp), sleep schedule (nightmode.cpp), settings page (config.cpp), flash save (store.cpp)
-lib/gamecore/    portable game core (no heap, no libc), used by the firmware and the preview
+lib/gamecore/    portable game core (no heap, no libc), used by the firmware and the preview:
+                 world.cpp (generator, autotiler), godus.cpp (scene, camera, shaman, top bar)
 lib/gqsafe/      pure decision code of the recovery layer (boot counters, WiFi ladder, upload checks)
-assets/src/      editable PNG sheets
+assets/src/      editable PNG sheets (terrain quarters, objects, shaman, icons, and the r1 sheets)
 tools/           asset converter, version stamp, .bin safety checks, source lint, CI guards
 firmware/config_page.h  source of the /config page; the firmware serves the gzip copy in config_page_gz.h (run tools/gen_config_gz.py after editing it, CI verifies)
-docs/            design (DESIGN.md), the owner's recovery guide
+docs/            design (DESIGN.md), the owner's recovery guide, screenshots/
 preview/         browser preview (WebAssembly)
 ```
 

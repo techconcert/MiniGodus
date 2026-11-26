@@ -140,6 +140,27 @@ textarea { width: 100%; box-sizing: border-box; height: 5.2em; font-family: var(
           </div>
         </div>
         <div class="group">
+          <h2>World</h2>
+          <div class="seg">
+            <input id="seed-n" type="number" min="1" max="4294967295" value="12345" aria-label="World seed">
+            <button class="small" id="seed-go" type="button">Load seed</button>
+            <button class="small" id="world-new" type="button">New world</button>
+          </div>
+          <div class="seg">
+            <select id="force-land" aria-label="Landform">
+              <option value="-1">Landform: from seed</option><option value="0">Island</option><option value="1">Coast</option>
+              <option value="2">River valley</option><option value="3">Lake basin</option><option value="4">Archipelago</option>
+              <option value="5">Mountain plateau</option>
+            </select>
+            <select id="force-clim" aria-label="Climate">
+              <option value="-1">Climate: from seed</option><option value="0">Temperate</option><option value="1">Savanna</option>
+              <option value="2">Northern</option><option value="3">Tropical</option>
+            </select>
+          </div>
+          <p class="note" id="world-name">World: &ndash;</p>
+          <p class="note">Load seed shows exactly the world of that seed. New world picks a random seed and never repeats the landform and climate of the world before. The two menus force a landform or climate for the next world.</p>
+        </div>
+        <div class="group">
           <h2>Environment</h2>
           <div class="seg">
             <label class="check"><input id="wifi-down" type="checkbox"> WiFi down</label>
@@ -220,7 +241,7 @@ textarea { width: 100%; box-sizing: border-box; height: 5.2em; font-family: var(
 
   function start(sc) {
     scene = sc;
-    ex.init(sc, 12345);
+    ex.init(sc, Math.max(1, (+$("seed-n").value) >>> 0) | 0);
     setStatus(0, "IP 192.168.1.50");
     setStatus(1, "");
     setStatus(2, "PREVIEW BUILD");
@@ -320,13 +341,15 @@ textarea { width: 100%; box-sizing: border-box; height: 5.2em; font-family: var(
 
   // ---- debug panel: everything goes through gc_debug and gc_query (keys and commands: lib/gamecore/src/gq_types.h)
   const Q = {};
-  ["DAY", "MINUTE", "WEATHER", "HERO_ACT", "HERO_ABED", "LIVE_WX", "LIVE_TEMP", "LIVE_FLAGS", "SLEEP_MODE", "SHAMAN_X", "SHAMAN_Y", "SEED"].forEach((k, i) => { Q[k] = i; });
-  const DBG = { SET_DAY: 0, NEXT_DAY: 1, FORCE_ACT: 2 };
+  ["DAY", "MINUTE", "WEATHER", "HERO_ACT", "HERO_ABED", "LIVE_WX", "LIVE_TEMP", "LIVE_FLAGS", "SLEEP_MODE", "SHAMAN_X", "SHAMAN_Y", "SEED", "LANDFORM", "CLIMATE", "CAM_X", "CAM_Y", "START_X", "START_Y", "START_AREA", "MAP_HASH", "HERO_ON_LAND"].forEach((k, i) => { Q[k] = i; });
+  const DBG = { SET_DAY: 0, NEXT_DAY: 1, FORCE_ACT: 2, NEW_WORLD: 3, SET_SEED: 4, FORCE_LAND: 5, FORCE_CLIM: 6, SET_CAM: 7 };
   const NAMES = {
     WEATHER: ["clear", "cloudy", "rain", "storm", "fog", "snow", "windy"],
     HERO_ACT: ["none", "wander", "asleep"],
+    LANDFORM: ["island", "coast", "river valley", "lake basin", "archipelago", "mountain plateau"],
+    CLIMATE: ["temperate", "savanna", "northern", "tropical"],
   };
-  const READ = ["DAY", "MINUTE", "WEATHER", "HERO_ACT", "HERO_ABED", "LIVE_WX", "LIVE_TEMP", "SLEEP_MODE", "SHAMAN_X", "SHAMAN_Y", "SEED"];
+  const READ = ["DAY", "MINUTE", "WEATHER", "HERO_ACT", "HERO_ABED", "LIVE_WX", "LIVE_TEMP", "SLEEP_MODE", "SHAMAN_X", "SHAMAN_Y", "SEED", "LANDFORM", "CLIMATE", "CAM_X", "CAM_Y"];
   const ro = $("readout");
   const roCells = {};
   READ.forEach((k) => {
@@ -347,6 +370,12 @@ textarea { width: 100%; box-sizing: border-box; height: 5.2em; font-family: var(
       roCells[k].textContent = v;
     }
     if (document.activeElement !== $("day-n")) $("day-n").value = ex.query(Q.DAY);
+    worldLabel();
+  }
+  function worldLabel() {
+    const n = ex.world_name();
+    const name = new TextDecoder().decode(new Uint8Array(mem.buffer, ex.text_ptr(), n));
+    $("world-name").textContent = "World: " + name + " (" + NAMES.CLIMATE[ex.query(Q.CLIMATE)] + " " + NAMES.LANDFORM[ex.query(Q.LANDFORM)] + ", seed " + (ex.query(Q.SEED) >>> 0) + ")";
   }
   const dbg = (cmd, arg) => { ex.debug(cmd, arg | 0); readout(); };
   function dayBase() { return Math.floor(ex.query(Q.DAY) / 28) * 28; }
@@ -355,6 +384,12 @@ textarea { width: 100%; box-sizing: border-box; height: 5.2em; font-family: var(
   function wireDebug() {
     $("day-go").addEventListener("click", () => dbg(DBG.SET_DAY, Math.max(0, Math.min(65535, +$("day-n").value || 0))));
     $("day-next").addEventListener("click", () => dbg(DBG.NEXT_DAY, 0));
+    const shown = () => { $("seed-n").value = ex.query(Q.SEED) >>> 0; startDay = null; readout(); };
+    $("seed-go").addEventListener("click", () => { dbg(DBG.SET_SEED, (Math.max(1, (+$("seed-n").value) >>> 0)) | 0); shown(); });
+    $("seed-n").addEventListener("keydown", (e) => { if (e.key === "Enter") $("seed-go").click(); });
+    $("world-new").addEventListener("click", () => { dbg(DBG.NEW_WORLD, 0); shown(); });
+    $("force-land").addEventListener("change", () => ex.debug(DBG.FORCE_LAND, +$("force-land").value));
+    $("force-clim").addEventListener("change", () => ex.debug(DBG.FORCE_CLIM, +$("force-clim").value));
     $("wifi-down").addEventListener("change", () => ex.set_net($("wifi-down").checked ? 1 : 0));
     $("clock-approx").addEventListener("change", () => ex.clock_quality($("clock-approx").checked ? 1 : 0));
     $("restart").addEventListener("click", () => start(scene));
