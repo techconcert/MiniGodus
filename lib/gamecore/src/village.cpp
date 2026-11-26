@@ -6,7 +6,8 @@
 // step round, in the shared scratch buffer g_dist.
 #include "village.h"
 
-enum { F_AGE = 3, F_FEM = 4, F_USED = 8, F_WEAK = 16, F_INSIDE = 32 };       // Vil.fl, bits 6-7: facing
+// Vil.fl: bits 0-1 age class, 2 female, 3 used, 4 weak, 5 and Vil.ra bit 7: a mother's birth cooldown in days (0..3); bits 6-7 facing
+enum { F_AGE = 3, F_FEM = 4, F_USED = 8, F_WEAK = 16 };
 enum { VSTEP_MS = 90, ANIM_MS = 420 };
 enum { K_CENTER = 100, K_WATER = 101, K_TREE = 102, K_SHORE = 103 };            // flow targets besides buildings (index + 1)
 enum { SITE = 0x80 };                                                          // Bld.tp: a building site, not yet finished
@@ -26,14 +27,22 @@ static uint32_t vr(void) { s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= 
 
 static int used(int i) { return (V[i].fl & F_USED) != 0; }
 static int vrole(int i) { return V[i].ra & 15; }
-static int vact(int i) { return V[i].ra >> 4; }
+static int vact(int i) { return (V[i].ra >> 4) & 7; }
 static void set_role(int i, int r) { V[i].ra = (uint8_t)((V[i].ra & 0xF0) | r); }
-static void set_act(int i, int a) { V[i].ra = (uint8_t)((V[i].ra & 15) | (a << 4)); }
+static void set_act(int i, int a) { V[i].ra = (uint8_t)((V[i].ra & 0x8F) | (a << 4)); }
+static int cool(int i) { return ((V[i].fl >> 5) & 1) | ((V[i].ra >> 7) << 1); }
+static void set_cool(int i, int c) { V[i].fl = (uint8_t)((V[i].fl & ~32) | ((c & 1) << 5)); V[i].ra = (uint8_t)((V[i].ra & 0x7F) | ((c >> 1) << 7)); }
 static int vcls(int i) { return V[i].fl & F_AGE; }
 static int hunger(int i) { return V[i].nd & 7; }
 static int thirst(int i) { return V[i].nd >> 3; }
 static void set_hunger(int i, int h) { V[i].nd = (uint8_t)((V[i].nd & 0xF8) | (h > 7 ? 7 : h)); }
 static void set_thirst(int i, int t) { V[i].nd = (uint8_t)((V[i].nd & 7) | ((t > 31 ? 31 : t) << 3)); }
+// a drink ends the weakness of thirst at once (hunger weakness ends at the next meal)
+static void drink(int i) {
+  set_thirst(i, 0);
+  if (hunger(i) < HUNGER_WEAK) V[i].fl &= (uint8_t)~F_WEAK;
+}
+
 static int life(int i) { int v = V[i].age >> 5; return 20 + v + (v == 7 ? 1 : 0); }     // adult lifespan, 20..28 days
 static int days(int i) { return V[i].age & 31; }
 static int is_moving(int i) { int a = vact(i); return a == A_GO || a == A_BED || a == A_DRINK || a == A_RET; }
@@ -320,21 +329,28 @@ void village_new_day(int night) {
     trees++;
     mark_tile(x, y);
   }
-  // a child is born when there is a free bed, two days of food to spare and a fertile couple
-  int p = pop(), m = 0, f = 0;
-  for (int i = 0; i < MAXV; i++)
-    if (used(i) && vcls(i) == AGE_ADULT && !(V[i].fl & F_WEAK)) { if (V[i].fl & F_FEM) f++; else m++; }
-  if (p < MAXV && m && f && p < capacity() && s_food >= (uint16_t)(p * 6)) {
-    int x, y;
+  // Couples: the k-th healthy woman and the k-th healthy man of working age. A couple has a child about every 3 days
+  // (the woman's cooldown), when there is a free bed and two days of food to spare.
+  for (int i = 0; i < MAXV; i++) if (used(i) && cool(i) > 0) set_cool(i, cool(i) - 1);
+  for (int k = 0;; k++) {
+    int w = -1, m = -1, n;
+    n = k;
+    for (int i = 0; i < MAXV && w < 0; i++) if (used(i) && vcls(i) == AGE_ADULT && (V[i].fl & F_FEM) && !(V[i].fl & F_WEAK) && n-- == 0) w = i;
+    n = k;
+    for (int i = 0; i < MAXV && m < 0; i++) if (used(i) && vcls(i) == AGE_ADULT && !(V[i].fl & F_FEM) && !(V[i].fl & F_WEAK) && n-- == 0) m = i;
+    if (w < 0 || m < 0) break;
+    int p = pop();
+    if (cool(w) > 0 || p >= MAXV || p >= capacity() || s_food < (uint16_t)(p * 6)) continue;
     int i = add_villager(AGE_CHILD, (int)(vr() & 1), 0, cx(), cy());
-    if (i >= 0) {
-      rebuild_homes();
-      home_spot(i, &x, &y);
-      V[i].x = (uint8_t)x; V[i].y = (uint8_t)y;
-      V[i].age = (uint8_t)(V[i].age & 0xE0);
-      s_births++;
-      mark_tile(x, y);
-    }
+    if (i < 0) break;
+    rebuild_homes();
+    int x, y;
+    home_spot(i, &x, &y);
+    V[i].x = (uint8_t)x; V[i].y = (uint8_t)y;
+    V[i].age = (uint8_t)(V[i].age & 0xE0);
+    set_cool(w, 3);
+    s_births++;
+    mark_tile(x, y);
   }
 }
 
@@ -373,9 +389,9 @@ void village_minute(int m, int night) {
     if (!used(i)) continue;
     int a = vact(i);
     if (night) {
-      if (a != A_BED && a != A_SLEEP) { set_act(i, A_BED); V[i].fl &= (uint8_t)~F_INSIDE; }
+      if (a != A_BED && a != A_SLEEP) set_act(i, A_BED);
     } else if (a == A_BED || a == A_SLEEP) {
-      set_act(i, A_IDLE); V[i].fl &= (uint8_t)~F_INSIDE; s_woke = 1; mark_tile(V[i].x, V[i].y);
+      set_act(i, A_IDLE); s_woke = 1; mark_tile(V[i].x, V[i].y);
     }
   }
   rebuild_homes();
@@ -394,7 +410,7 @@ void village_minute(int m, int night) {
     if (!used(i) || thirst(i) < 12) continue;
     int a = vact(i);
     if (a == A_BED || a == A_SLEEP || a == A_EAT || a == A_DRINK || a == A_RET) continue;
-    if (s_water > 0) { s_water--; set_thirst(i, 0); }
+    if (s_water > 0) { s_water--; drink(i); }
     else set_act(i, A_DRINK);
   }
 
@@ -470,8 +486,8 @@ void village_minute(int m, int night) {
 // ---------------------------------------------------------------- walking
 static void arrive(int i) {
   switch (vact(i)) {
-    case A_BED: set_act(i, A_SLEEP); if (s_home[i] < MAXB) V[i].fl |= F_INSIDE; mark_tile(V[i].x, V[i].y); break;
-    case A_DRINK: set_thirst(i, 0); set_act(i, A_IDLE); break;
+    case A_BED: set_act(i, A_SLEEP); mark_tile(V[i].x, V[i].y); break;
+    case A_DRINK: drink(i); set_act(i, A_IDLE); break;
     case A_GO: set_act(i, vrole(i) == R_CARRIER ? A_RET : A_WORK); break;
     case A_RET: s_water = (uint8_t)(s_water > 242 ? 250 : s_water + 8); set_act(i, A_IDLE); break;
     default: break;
@@ -581,8 +597,10 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
   }
   // villagers
   uint8_t rm[16];
+  // painter's order: villagers lower on the map are drawn after (over) the ones above them
+  for (int row = (wy0 > 0 ? wy0 >> 4 : 0); row <= (wy0 > 0 ? wy0 >> 4 : 0) + 2; row++)
   for (int i = 0; i < MAXV; i++) {
-    if (!used(i) || (V[i].fl & F_INSIDE)) continue;
+    if (!used(i) || V[i].y != row || (vact(i) == A_SLEEP && s_home[i] < MAXB)) continue;      // asleep in a bed: indoors
     int sx = V[i].x * GC_TILE - wx0, sy = V[i].y * GC_TILE;
     if (sy + GC_TILE <= wy0 || sy - 10 >= wy0 + GC_STRIP_H || sx + 16 <= 0 || sx >= GC_W) continue;
     int role = vrole(i), act = vact(i), cls = vcls(i), dir = V[i].fl >> 6;
@@ -728,6 +746,7 @@ void village_debug(int cmd, int32_t arg) {
       rebuild_homes(); assign_roles();
       break;
     }
+    case 3: for (int k = 0; k < MAXV; k++) if (used(k)) { set_thirst(k, arg < 0 ? 0 : arg); if (arg >= 28) V[k].fl |= F_WEAK; } break;
     default: break;
   }
 }

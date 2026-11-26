@@ -147,7 +147,65 @@ static void test_save_round_trip() {
   }
 }
 
+// A couple has a child about every 3 days, not every midnight.
+static void test_birth_cadence() {
+  gc_init(GC_SCENE_VILLAGE, 777, 0);
+  gc_debug(GQ_DBG_WOOD, 400);
+  int wall = 5 * 60;
+  gc_set_clock(5, 0, 1);
+  int day_of_birth[10], seen = 0, last = 0;
+  for (int d = 0; d < 9; d++) {
+    for (int m = 0; m < 1440; m++) { minute(wall); if (m % 200 == 0) gc_debug(GQ_DBG_FOOD, 700); }
+    int b = vq(Q_BIRTHS);
+    if (b > last) { day_of_birth[seen++ % 10] = d; last = b; }
+    if (d == 4) CHECK(vq(Q_BIRTHS) >= 1 && vq(Q_BIRTHS) <= 2);          // days 1 and 4 at most, for the only couple
+  }
+  CHECK(vq(Q_BIRTHS) >= 2 && vq(Q_BIRTHS) <= 5);
+  std::printf("births on days:");
+  for (int i = 0; i < seen && i < 10; i++) std::printf(" %d", day_of_birth[i]);
+  std::printf("\n");
+}
+
+// A forward jump over midnight is a new day, a jump back (time zone, NTP fix) is not.
+static void test_clock_jumps() {
+  gc_init(GC_SCENE_VILLAGE, 31, 0);
+  gc_set_clock(23, 50, 1);
+  int d0 = (int)gc_query(GQ_Q_DAY);
+  gc_set_clock(0, 30, 1);                                                // 40 minutes forward over midnight
+  CHECK((int)gc_query(GQ_Q_DAY) == d0 + 1);
+  gc_set_clock(22, 0, 1);                                                // 21.5 hours "forward" = a big step back
+  CHECK((int)gc_query(GQ_Q_DAY) == d0 + 1);
+  gc_set_clock(7, 0, 1);                                                 // 9 hours forward over midnight
+  CHECK((int)gc_query(GQ_Q_DAY) == d0 + 2);
+  gc_set_clock(20, 0, 1);                                                // same day
+  CHECK((int)gc_query(GQ_Q_DAY) == d0 + 2);
+  gc_set_clock(8, 0, 1);                                                 // 12 hours back: not a new day
+  CHECK((int)gc_query(GQ_Q_DAY) == d0 + 2);
+  gc_set_clock(3, 0, 1);                                                 // 5 hours back: not a new day
+  CHECK((int)gc_query(GQ_Q_DAY) == d0 + 2);
+  gc_set_clock(23, 59, 1);
+  gc_set_clock(0, 0, 1);                                                 // the ordinary midnight
+  CHECK((int)gc_query(GQ_Q_DAY) == d0 + 3);
+}
+
+// Weakness from thirst ends with the drink, not with the next meal.
+static void test_thirst_weakness() {
+  gc_init(GC_SCENE_VILLAGE, 4244, 0);
+  gc_debug(GQ_DBG_FOOD, 100);
+  int wall = 8 * 60;
+  gc_set_clock(8, 0, 1);
+  for (int i = 0; i < 8; i++) gc_tick(500);
+  gc_debug(GQ_DBG_THIRST, 30);
+  int weak_seen = vq(Q_WEAK) > 0;
+  for (int m = 0; m < 100; m++) { minute(wall); if (vq(Q_WEAK) > 0) weak_seen = 1; }
+  CHECK(weak_seen);
+  CHECK(wall < 12 * 60 + 30 && vq(Q_WEAK) == 0);                         // no meal in between
+}
+
 int main() {
+  test_clock_jumps();
+  test_birth_cadence();
+  test_thirst_weakness();
   test_meals_hunger_sleep();
   test_births_and_growth();
   test_save_round_trip();

@@ -153,7 +153,9 @@ void world_clock_changed(void) {
       if (mm == 0) world_new_day();
       village_minute(mm, night_at(mm));
     }
-  } else if (s_last_min >= 0 && m < s_last_min && s_last_min - m > 600) world_new_day();
+  } else if (d > 2 && d < 720 && s_last_min + d >= 1440) {   // a forward jump over midnight is a new day; a jump back (time zone, NTP) is not
+    world_new_day();
+  }
   s_last_min = m;
   G.s.minute = (uint16_t)m;
 }
@@ -559,6 +561,7 @@ void world_debug(int cmd, int32_t arg) {
   else if (cmd == GQ_DBG_FOOD) village_debug(0, arg);
   else if (cmd == GQ_DBG_WOOD) village_debug(1, arg);
   else if (cmd == GQ_DBG_ADD_VILLAGERS) village_debug(2, arg);
+  else if (cmd == GQ_DBG_THIRST) village_debug(3, arg);
   else if (cmd == GQ_DBG_SET_SEED) new_world((uint32_t)arg, 1);
   else if (cmd == GQ_DBG_FORCE_LAND) s_force_l = (int8_t)(arg >= 0 && arg < LF_COUNT ? arg : -1);
   else if (cmd == GQ_DBG_FORCE_CLIM) s_force_c = (int8_t)(arg >= 0 && arg < CL_COUNT ? arg : -1);

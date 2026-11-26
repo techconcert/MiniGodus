@@ -46,7 +46,8 @@ enum { GQ_DBG_SET_DAY, GQ_DBG_NEXT_DAY, GQ_DBG_FORCE_ACT /*arg = GQ_ACT_**/,
        GQ_DBG_SET_CAM,
        GQ_DBG_FOOD,           // arg = food stock
        GQ_DBG_WOOD,           // arg = wood stock
-       GQ_DBG_ADD_VILLAGERS };// arg = number of adults to add      // arg = x + 1024 * y (world pixels), clamped; the camera follows the shaman again after he moves
+       GQ_DBG_ADD_VILLAGERS,  // arg = number of adults to add
+       GQ_DBG_THIRST };       // arg = thirst of every villager (0..31)      // arg = x + 1024 * y (world pixels), clamped; the camera follows the shaman again after he moves
 
 // ---- the saved state, 192 bytes, little-endian, no padding. The core only exports and imports bytes;
 // firmware/store.cpp keeps them in flash.

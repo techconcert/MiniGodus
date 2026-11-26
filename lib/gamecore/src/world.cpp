@@ -155,6 +155,29 @@ static void smooth_heights(void) {
   }
 }
 
+// Removes everything narrower than 2 tiles from every height band: a tile of height >= t with lower neighbours on both
+// sides (left and right, or above and below) is a ribbon, spike or pillar and is lowered; a lower tile between two
+// higher ones is a crack and is filled. Coasts and terraces end up at least 2 tiles wide.
+enum { LAND_TARGET = 54 };
+static void despeckle(void) {
+  for (int t = 7; t >= 1; t--)
+    for (int y = 0; y < WM; y++)
+      for (int x = 0; x < WM; x++) {
+        int h = hgt(x, y);
+        if (h < t) continue;
+        int l = x > 0 ? hgt(x - 1, y) : h, r = x < WM - 1 ? hgt(x + 1, y) : h, u = y > 0 ? hgt(x, y - 1) : h, d = y < WM - 1 ? hgt(x, y + 1) : h;
+        if ((l < t && r < t) || (u < t && d < t)) g_map[TI(x, y)] = (uint8_t)((g_map[TI(x, y)] & ~7) | (t - 1));
+      }
+  for (int t = 1; t <= 7; t++)
+    for (int y = 0; y < WM; y++)
+      for (int x = 0; x < WM; x++) {
+        int h = hgt(x, y);
+        if (h >= t) continue;
+        int l = x > 0 ? hgt(x - 1, y) : h, r = x < WM - 1 ? hgt(x + 1, y) : h, u = y > 0 ? hgt(x, y - 1) : h, d = y < WM - 1 ? hgt(x, y + 1) : h;
+        if ((l >= t && r >= t) || (u >= t && d >= t)) g_map[TI(x, y)] = (uint8_t)((g_map[TI(x, y)] & ~7) | t);
+      }
+}
+
 // ------------------------------------------------------------------------------------------------ walking
 static int walk_ok(uint8_t b) { int h = MT_H(b); return h >= 2 && h <= 6 && MT_OBJ(b) == OB_NONE && MT_SOIL(b) != SOIL_BUILT; }
 int world_walkable(int tx, int ty) { return tx >= 0 && ty >= 0 && tx < WM && ty < WM && walk_ok(g_map[TI(tx, ty)]); }
@@ -293,20 +316,21 @@ void world_generate(uint32_t seed, int landform, int climate) {
   s_rng = hash32(seed ^ 0xa511e9b3U) | 1;
   s_salt = hash32(seed + 77);
   shape_init(landform);
-  // islands and archipelagos are raised until at least ~45% of the map is land, so the village has room
-  int bias = 0;
+  // islands and archipelagos are raised until about half of the map is land, with open sea along the border
+  int bias = 0, sea_edge = landform == LF_ISLAND || landform == LF_ARCH;
   for (int attempt = 0; attempt < 10; attempt++) {
     int land = 0;
     for (int y = 0; y < WM; y++)
       for (int x = 0; x < WM; x++) {
         int h = height_of(elevation(landform, x, y) + bias);
+        if (sea_edge && (x < 2 || y < 2 || x >= WM - 2 || y >= WM - 2)) h = 0;
         g_map[TI(x, y)] = (uint8_t)h;
         land += h >= 3;
       }
-    if ((landform != LF_ISLAND && landform != LF_ARCH) || land * 100 >= WM * WM * 56) break;
+    if (!sea_edge || land * 100 >= WM * WM * LAND_TARGET) break;
     bias += 14;
   }
-  smooth_heights();
+  for (int pass = 0; pass < 2; pass++) { despeckle(); smooth_heights(); }
 
   // ground: snow caps in the north, fertile soil by the water, dry soil on the savanna
   for (int y = 0; y < WM; y++)

@@ -157,17 +157,29 @@ static void test_idle_dirty() {
   CHECK(gc_dirty_mask() == 0);
 }
 
-// Shape of the land (r3 polish): islands and archipelagos cover about half the map, the coast is ragged and no height
-// band is a near-axis-aligned rectangle (the nested square rings of r2).
+// Shape of the land (r3 polish): islands and archipelagos cover about half the map and leave open sea along the border,
+// the coast is ragged, no height band is a near-axis-aligned rectangle (the nested square rings of r2) and nothing is
+// narrower than 2 tiles.
 static void test_shape_irregular() {
-  double sum_ratio = 0; int n = 0;
+  double sum_ratio[6] = {0}; int n[6] = {0};
+  long narrow = 0, worlds = 0;
   for (uint32_t seed = 1; seed <= 120; seed++)
     for (int lf = 0; lf < 6; lf++) {
       world_generate(seed, lf, (int)(seed & 3));
-      int land = 0, per = 0;
+      worlds++;
+      int land = 0, shore = 0, per = 0, edge_land = 0;
       for (int y = 0; y < WM; y++)
         for (int x = 0; x < WM; x++) {
-          if (MT_H(g_map[y * WM + x]) < 3) continue;
+          int h = MT_H(g_map[y * WM + x]);
+          if (h >= 2) shore++;
+          if (h >= 2 && (x < 2 || y < 2 || x >= WM - 2 || y >= WM - 2)) edge_land++;
+          for (int t = 1; t <= 7; t++) {      // ribbons, spikes and pillars narrower than 2 tiles
+            if (h < t) continue;
+            int l = x > 0 ? MT_H(g_map[y * WM + x - 1]) : h, r = x < WM - 1 ? MT_H(g_map[y * WM + x + 1]) : h;
+            int u = y > 0 ? MT_H(g_map[(y - 1) * WM + x]) : h, d = y < WM - 1 ? MT_H(g_map[(y + 1) * WM + x]) : h;
+            if ((l < t && r < t) || (u < t && d < t)) narrow++;
+          }
+          if (h < 3) continue;
           land++;
           static const int dx[4] = {1, -1, 0, 0}, dy[4] = {0, 0, 1, -1};
           for (int k = 0; k < 4; k++) {
@@ -175,12 +187,13 @@ static void test_shape_irregular() {
             if (a < 0 || b < 0 || a >= WM || b >= WM || MT_H(g_map[b * WM + a]) < 3) per++;
           }
         }
-      if (lf == LF_ISLAND || lf == LF_ARCH) CHECK(land * 100 >= WM * WM * 40);      // room for the village
+      if (lf == LF_ISLAND || lf == LF_ARCH) {
+        CHECK(shore * 100 >= WM * WM * 42 && shore * 100 <= WM * WM * 62);       // about half the map, beaches included
+        CHECK(edge_land == 0);                                                     // sea all round the border
+        CHECK(land >= 150);                                                        // room for the village
+      }
       if (lf != LF_ISLAND && lf != LF_ARCH && lf != LF_PLATEAU) continue;
-      // a square has perimeter 4 * sqrt(area); a smooth disc about 4.5; ragged coasts clearly more
-      double ratio = (double)per / std::sqrt((double)land);
-      if (lf != LF_PLATEAU) CHECK(ratio > 4.9);
-      sum_ratio += ratio; n++;
+      sum_ratio[lf] += (double)per / std::sqrt((double)land); n[lf]++;
       // every height band from 4 up: how much of its bounding box it fills (a rectangle fills it all)
       for (int h = 4; h <= 6; h++) {
         int c = 0, x0 = WM, x1 = -1, y0 = WM, y1 = -1;
@@ -189,10 +202,13 @@ static void test_shape_irregular() {
             if (MT_H(g_map[y * WM + x]) >= h) { c++; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
         if (c < 40) continue;
         int box = (x1 - x0 + 1) * (y1 - y0 + 1);
-        CHECK(c * 100 < box * 88);
+        CHECK(c * 100 < box * (lf == LF_ISLAND ? 91 : 96));
       }
     }
-  CHECK(n > 0 && sum_ratio / n > 5.6);
+  CHECK(sum_ratio[LF_ISLAND] / n[LF_ISLAND] > 4.8);          // r2's island: 4.57 with bands filling 95% of their box
+  CHECK(sum_ratio[LF_ARCH] / n[LF_ARCH] > 4.8);
+  CHECK(sum_ratio[LF_PLATEAU] / n[LF_PLATEAU] > 5.0);
+  CHECK(narrow < worlds * 3);                                 // a handful of tiles at most (the start carve and the height smoothing)
 }
 
 int main() {

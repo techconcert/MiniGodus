@@ -78,8 +78,8 @@ frame; the 13 map strips are then redrawn from those tables while the camera scr
 | ![](docs/screenshots/village-river-valley-tropical.png) | ![](docs/screenshots/village-island-northern.png) |
 
 **People.** Up to 48 villagers, 6 bytes each. The game starts with one couple in a tent. A child grows up in 5 days; an adult
-lives 20 to 28 days (the last 5 are spent as an elder, who prays). A child is born, at most one a day, when there is a free
-bed, two days of food to spare and an adult man and woman who are not weak. Hunger is counted in missed meals: weak after 4,
+lives 20 to 28 days (the last 5 are spent as an elder, who prays). Villagers pair up (the k-th healthy woman with the k-th healthy man); a couple has a child about every 3 days, when there is a free
+bed and two days of food to spare. Hunger is counted in missed meals: weak after 4,
 death after 6 (7 with a healer awake). Thirst is satisfied at a well or on the shore; a water carrier fills a stock that
 everybody can drink from.
 
@@ -102,7 +102,7 @@ The saved game (still 192 bytes) holds the first 16 villagers and 18 buildings, 
 save is release r6.
 
 The land itself got a pass in r3: heights come from fractal noise with a domain warp before the landform shape is applied,
-so coasts and cliffs are irregular instead of nested rings, and islands and archipelagos cover about half the map.
+so coasts and cliffs are irregular instead of nested rings, and a smoothing pass removes everything narrower than 2 tiles. Islands and archipelagos cover about half the map, with open sea along the border.
 
 | Before (r2) | After (r3) |
 |---|---|
