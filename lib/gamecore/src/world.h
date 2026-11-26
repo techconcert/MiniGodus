@@ -54,5 +54,9 @@ void world_flow(int tx, int ty);
 void world_flow_begin(void);                          // several goals: begin, seed each goal tile, run
 void world_flow_seed(int tx, int ty, int d);
 void world_flow_run(void);
+int  world_step_ok(int x, int y, int nx, int ny);
+void world_set_height(int x, int y, int h);
+int  world_nearest_walkable(int x, int y, int* ox, int* oy);
+void world_flow_adjacent(int tx, int ty);
 void world_set_built(int tx, int ty, int on);
 void world_clear_object(int tx, int ty);
