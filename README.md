@@ -158,7 +158,7 @@ second pond for fish (LEVELLING LAND on the band). A building that trees have sh
 | Lumberjack hut | 2x2 | 4 | more wood per tree |
 | Granary | 2x2 | 10 | food cap +100 |
 | Shrine | 2x2 | 6 | +1 faith per half hour, praying elders count 3 |
-| Infirmary | 2x2 or 3x2 | first sick villager | heals in 1 day with a healer (3 days without) |
+| Infirmary | 2x2 or 3x2 | first sick villager | heals in 1 day (3 days without an infirmary) |
 
 A bigger home may replace tents and huts. Eating from three or more of the four food sources (grain, fruit, animal, fish)
 in one day makes the village content: 25% more faith until midnight.
@@ -200,8 +200,7 @@ mild and dry: clear sky, 15 C, no rain, no shadows, no frost, no heat.
 **Sickness.** Once a day, at midnight, every villager rolls against a risk of 1% plus: 3% for each missed meal (up to 3), a quarter of
 a percent per thirst point, 2% per half hour spent outside in the rain (up to 10 half hours, 20%), 2% per hour outside in the cold (counted together), 12% for a night in a
 cold home without wood, and 3% for elders and the weak. A sick villager does not work, walks to the infirmary and wears a green tunic and
-a green cross. With an infirmary and a healer the sickness is over at the next midnight; an infirmary with nobody to tend it takes 2 days,
-no infirmary 3 days. Untreated, a sick elder or weak villager dies with a 25% chance at each midnight (6% in an infirmary with no healer);
+a green cross. With an infirmary the sickness is over at the next midnight; with no infirmary it takes 3 days. Untreated, a sick elder or weak villager dies with a 25% chance at each midnight (6% in an infirmary with no healer);
 healthy children and adults never die of it. A healer is hired as soon as somebody is sick and there is an infirmary. The shaman's health
 need (the top of his list) builds the infirmary when the first villager falls sick, hunger alone does not call for one.
 
@@ -214,8 +213,8 @@ forest is nearly gone). Lumberjacks leave the last 6 trees alone and never fell 
 same through the normal reading): `GQ_DBG_WEATHER` forces a weather (and its top bar icon), `GQ_DBG_TEMP` forces the temperature in tenths of a degree,
 `GQ_DBG_SICK` makes a villager sick, `GQ_DBG_AGE` makes one an elder or weak, `GQ_DBG_FLASH` strikes lightning now.
 
-**Cost.** Rain and snow are 24 to 32 particles in one fixed array, moved every 100 ms and drawn into the strips that are being drawn anyway (the
-map strips are redrawn about 10 times a second while it rains or snows; clear weather redraws only what changed, plus the slow cloud shadows).
+**Cost.** Rain and snow are 24 to 32 particles in one fixed array, moved every 150 ms and drawn into the strips that are being drawn anyway (the
+map strips are redrawn about 6 to 7 times a second while it rains or snows; clear weather redraws only what changed, plus the slow cloud shadows).
 Puddles, haze, shadows, the night dimming and the lightning are per strip, with no full-screen buffer.
 
 **Memory and save.** The weather, sickness and forest add about 340 bytes of static RAM (sick state 48 bytes, snow map 128, saplings 32, particles 64,
@@ -223,7 +222,7 @@ shadows 8, counters). The saved game keeps 192 bytes, version 4: a villager's si
 as healthy), so an r4 save loads. The weather itself, the snow, the stumps and the saplings are not saved (the weather comes from the live reading, and
 the forest is regenerated from the seed on load), nor is the sickness of the villagers beyond the first 16.
 
-**Known limits of r5:** the full multi-slot save is r6; the forest, felled trees and saplings come back as generated after a restart; a sick villager is
+**Known limits of r5:** the full multi-slot save is r6; felled trees, stumps and saplings are not saved, so after a restart the forest comes back as generated from the seed (r6's multi-slot save will keep them); a sick villager is
 sick for the whole time (no partial recovery); the night dimming has no lit windows yet; weather does not stop the shaman casting; cloud shadows and the
 night dimming are drawn over buildings and people as a flat tint.
 

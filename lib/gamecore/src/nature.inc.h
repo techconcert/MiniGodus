@@ -19,7 +19,7 @@ enum { SAP_N = 24, TREE_FLOOR = 6, TREE_TARGET = 36, NP = 32, MAPSTRIPS = 0x3FFE
 static uint16_t s_sap[SAP_N];                 // stumps and saplings: x | y << 5 | age days << 10 | sapling << 13, 0xFFFF = free
 static uint32_t s_wsnow[WM];                  // tiles where the weather put snow (one bit each); the permanent snow caps are not in it
 static uint8_t  s_snow_lvl, s_wet, s_wet_shown;
-static uint8_t  s_px[NP], s_py[NP], s_pkind, s_pn, s_pstep, s_dim, s_wlast, s_cstep, s_nshadow;
+static uint8_t  s_px[NP], s_py[NP], s_pkind, s_pn, s_pstep, s_dim, s_wlast, s_cstep, s_nshadow, s_gi;
 static uint16_t s_pacc, s_cacc;
 static int16_t  s_flash, s_bolt_cd;
 static uint8_t  s_bolt_x, s_bolt_end;
@@ -37,7 +37,7 @@ static void nature_reset(void) {
   s_hot = s_cold = s_rainy = s_storm = s_snowing = s_fog_now = 0;
   s_cond = 255; s_prev_night = 255; s_night_now = 0;
   for (int k = 0; k < (int)sizeof(s_fire); k++) s_fire[k] = 0;
-  s_pkind = 0; s_pn = 0; s_pstep = 0; s_dim = 0; s_wlast = 255; s_cstep = 0; s_nshadow = 0; s_pacc = s_cacc = 0;
+  s_pkind = 0; s_pn = 0; s_pstep = 0; s_dim = 0; s_wlast = 255; s_cstep = 0; s_nshadow = 0; s_gi = 0; s_pacc = s_cacc = 0;
   s_flash = 0; s_bolt_cd = 6000;
   if (!s_vis) s_vis = 0x9E3779B9u;
   for (int i = 0; i < 4; i++) { s_cs[i][0] = (int16_t)(30 + i * 140); s_cs[i][1] = (int16_t)(50 + i * 120); }
@@ -76,7 +76,7 @@ static void sickness_day(void) {
     int frail = (V[i].fl & F_WEAK) != 0 || vcls(i) == AGE_ELDER;
     if (sick(i)) {
       int d = sick_days(i) + 1;
-      int need = infirm ? (healer ? 1 : 2) : 3;
+      int need = infirm ? 1 : 3;
       int dpct = infirm ? (healer ? 0 : 6) : 25;                  // untreated, the frail may die
       if (frail && dpct && (int)(vr() % 100) < dpct) { kill(i); s_sick_deaths++; continue; }
       if (d >= need) { s_ill[i] = 0; s_roles_dirty = 1; } else s_ill[i] = (uint8_t)(0x80 | (d << 5));
@@ -177,16 +177,7 @@ static void nature_day(void) {
     int x = sap_x(e), y = sap_y(e), age = sap_age(e) < 7 ? sap_age(e) + 1 : 7, kind = sap_kind(e);
     mark_tile(x, y);
     if (!kind) { s_sap[k] = age >= 3 ? 0xFFFF : sap_pack(x, y, age, 0); continue; }
-    int need = 4 + ((x * 7 + y * 3) & 1);
-    if (age < need) { s_sap[k] = sap_pack(x, y, age, 1); continue; }
-    if (!sap_ok(x, y)) { s_sap[k] = 0xFFFF; continue; }
-    uint8_t b = g_map[y * WM + x];
-    world_flow(cx(), cy());
-    int base = count_reach(), fr = g_dist[y * WM + x] != 255 ? 1 : 0;
-    g_map[y * WM + x] = (uint8_t)((b & 0x3F) | (OB_TREE << 6));
-    world_flow(cx(), cy());
-    if (count_reach() != base - fr) { g_map[y * WM + x] = b; s_sap[k] = sap_pack(x, y, need, 1); continue; }      // a tree never closes a path: wait
-    s_sap[k] = 0xFFFF;
+    s_sap[k] = sap_pack(x, y, age, 1);          // a ripe sapling is turned into a tree by nature_minute, one at a time
   }
   // the forest seeds itself: saplings beside the trees that are left (anywhere when the forest is nearly gone)
   int trees = count_trees(), saps = count_saps(1);
@@ -197,6 +188,31 @@ static void nature_day(void) {
     if (at >= 0 && trees + saps >= 12) { x = at % WM + (int)(vr() % 5) - 2; y = at / WM + (int)(vr() % 5) - 2; }
     else { x = (int)(vr() % WM); y = (int)(vr() % WM); }
     if (sap_ok(x, y) && sap_find(x, y) < 0 && sap_put(x, y, 0, 1) >= 0) saps++;
+  }
+}
+
+static int sap_need(int x, int y) { return 4 + ((x * 7 + y * 3) & 1); }
+
+// Ripe saplings become trees, at most one per game minute: each needs two flood fills to prove it shuts no path, so the work is
+// spread over the day (a failed one waits for the next day).
+static void nature_minute(void) {
+  for (int q = 0; q < SAP_N; q++) {
+    int k = (s_gi + q) % SAP_N;
+    uint16_t e = s_sap[k];
+    if (e == 0xFFFF || !sap_kind(e)) continue;
+    int x = sap_x(e), y = sap_y(e), age = sap_age(e), need = sap_need(x, y);
+    if (age < need) continue;
+    s_gi = (uint8_t)((k + 1) % SAP_N);
+    if (!sap_ok(x, y)) { s_sap[k] = 0xFFFF; return; }
+    uint8_t b = g_map[y * WM + x];
+    world_flow(cx(), cy());
+    int base = count_reach(), fr = g_dist[y * WM + x] != 255 ? 1 : 0;
+    g_map[y * WM + x] = (uint8_t)((b & 0x3F) | (OB_TREE << 6));
+    world_flow(cx(), cy());
+    if (count_reach() != base - fr) { g_map[y * WM + x] = b; s_sap[k] = sap_pack(x, y, need - 1, 1); return; }      // a tree never closes a path: wait a day
+    s_sap[k] = 0xFFFF;
+    mark_tile(x, y);
+    return;
   }
 }
 
@@ -271,12 +287,12 @@ void weather_tick(uint32_t dt, int night) {
   }
   if (kind) {
     s_pacc = (uint16_t)(s_pacc + dt);
-    if (s_pacc >= 100) {
-      s_pacc = (uint16_t)(s_pacc - 100); s_pstep++;
+    if (s_pacc >= 150) {         // the whole map is redrawn for every step: 6 to 7 times a second
+      s_pacc = (uint16_t)(s_pacc - 150); s_pstep++;
       for (int i = 0; i < s_pn; i++) {
         int x = s_px[i], y = s_py[i];
-        if (kind == 3) { y += 3; x += (((s_pstep + i) & 7) < 4) ? 1 : -1; }
-        else { y += kind == 2 ? 17 : 13; if (kind == 2) x -= 3; }
+        if (kind == 3) { y += 4; x += (((s_pstep + i) & 7) < 4) ? 1 : -1; }
+        else { y += kind == 2 ? 26 : 20; if (kind == 2) x -= 4; }
         if (x < 0) x += 240;
         if (x >= 240) x -= 240;
         if (y >= 208) { y -= 208; if (kind != 3 || (vrnd() & 1)) x = (int)(vrnd() % 240); }

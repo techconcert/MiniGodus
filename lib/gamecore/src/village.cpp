@@ -366,7 +366,7 @@ static void meal(int m) {
       mark_tile(V[i].x, V[i].y);
     } else {
       set_hunger(i, hunger(i) + 1);
-      if (hunger(i) >= HUNGER_WEAK) { V[i].fl |= F_WEAK; s_sick = 1; }
+      if (hunger(i) >= HUNGER_WEAK) V[i].fl |= F_WEAK;
       if (hunger(i) >= HUNGER_DEATH + healer) kill(i);
     }
   }
@@ -417,7 +417,7 @@ void village_minute(int m, int night) {
     for (int i = 0; i < MAXV; i++) {
       if (!used(i) || ((vact(i) == A_SLEEP) && m % 60 != 0)) continue;
       set_thirst(i, thirst(i) + 1); s_thirst_n++;
-      if (thirst(i) >= 28) { V[i].fl |= F_WEAK; s_sick = 1; }
+      if (thirst(i) >= 28) V[i].fl |= F_WEAK;
       if (thirst(i) >= 31 && m % 60 == 0) { set_hunger(i, hunger(i) + 1); if (hunger(i) >= HUNGER_DEATH + 1) kill(i); }
     }
   for (int i = 0; i < MAXV; i++) {
@@ -482,6 +482,7 @@ void village_minute(int m, int night) {
       }
   }
   snow_minute(m);
+  nature_minute();
 
   // faith: awake adults believe, elders pray twice as much
   if (m % 30 == 0) {
@@ -730,6 +731,7 @@ int village_stat(int which) {
     case 18: return (int)s_casts;
     case 19: return P.kind;
     case 30: return unreachable_buildings();
+    case 248: return s_aborts;
     case 31: return s_pers;
     case 32: return count_ramps();
     case 33: return s_ponds;

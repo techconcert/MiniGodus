@@ -462,7 +462,7 @@ static void draw_top(uint16_t* out, int y0) {
   tb[len] = 0;
   int tx = GC_W - 4 - len * 12;
   draw_text(out, y0, tx, 1, tb, ink, 2, 0);
-  weather_icon(out, y0, tx - 17, 2, world_weather(), (G.live_flags & GC_WXF_NIGHT) ? 1 : 0);
+  weather_icon(out, y0, tx - 17, 2, world_weather(), ((G.live_flags & GC_WXF_NIGHT) || is_night() || want_bed()) ? 1 : 0);
 }
 
 static void draw_band(uint16_t* out, int y0) {

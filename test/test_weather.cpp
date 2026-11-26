@@ -2,8 +2,9 @@
 //   mapping      Open-Meteo WMO codes -> game weather, no reading -> clear, mild and dry; debug overrides
 //   rules        rain boosts the fields, snow and frost pause them, heat doubles thirst and hires carriers, cold burns one wood per
 //                occupied home per night and a cold home without wood raises sickness
-//   sickness     rises under rain, thirst and hunger; heals in 1 day with an infirmary and a healer, 3 without; kills elders and weak
+//   sickness     rises under rain, thirst and hunger; heals in 1 day with an infirmary, 3 without; kills elders and weak
 //                villagers when untreated; never kills a healthy fed adult after one rainy day; the shaman builds the infirmary
+//   shaman       builds the infirmary within 3 days when a villager is sick on day 1, on seeds that used to leave him retrying an unreachable site
 //   forest       lumberjacks fell trees and plant saplings; over 20 days the forest regrows and wood stays available
 //   snow         settles on the high layers and melts away again, the map goes back to what it was
 //   render       rain, snow, fog, shadows, night and lightning draw inside their strips
@@ -17,7 +18,7 @@
 
 enum { Q_POP = 0, Q_FOOD = 1, Q_WOOD = 2, Q_FAITH = 3, Q_DEATHS = 11, Q_ROLE = 20, Q_SICK = 36, Q_SEEN = 37, Q_SICKDEATHS = 38, Q_ONSETS = 39, Q_BLD = 40,
        Q_VIL = 60, Q_CROP_U = 200, Q_CROP_N = 201, Q_THIRST_N = 202, Q_BURNED = 203, Q_TREES = 204, Q_SAPS = 205, Q_FELLED = 206, Q_SNOW = 207,
-       Q_WET = 208, Q_HOMES = 209, Q_FIRES = 210, Q_BINFO = 110 };
+       Q_WET = 208, Q_HOMES = 209, Q_FIRES = 210, Q_ABORTS = 248, Q_BINFO = 110 };
 static int vq(int n) { return (int)gc_query(GQ_Q_VILLAGE + n); }
 
 static int g_ticks = 8;      // game ticks of 250 ms per simulated minute (the rule tests use fewer, they do not depend on walking)
@@ -208,7 +209,7 @@ static void test_risk() {
   CHECK(hungry >= clear * 2 + 4);
 }
 
-// Sickness heals at the first midnight with an infirmary and a healer, at the third without
+// Sickness heals at the first midnight with an infirmary, at the third without
 static void test_healing() {
   g_ticks = 4;
   int wall;
@@ -240,6 +241,33 @@ static void test_healing() {
   CHECK(is_sick(k));
   run_to(wall, 0, 5);
   CHECK(!is_sick(k) && is_alive(k));                                    // well after one night
+}
+
+// A sick villager on day 1: the shaman must get the infirmary built. Seeds 4, 8, 12 and 15 used to leave him choosing an unreachable
+// site again and again (he could not stand beside the tile to change), with his casts frozen and no infirmary.
+static void test_unreachable_site() {
+  g_ticks = 8;
+  const uint32_t seeds[4] = {4, 8, 12, 15};
+  const int pops[2] = {4, 12};
+  for (uint32_t seed : seeds)
+    for (int pop : pops) {
+      gc_init(GC_SCENE_VILLAGE, seed * 6007u, 0);
+      gc_debug(GQ_DBG_FORCE_LAND, (int)(seed % 6)); gc_debug(GQ_DBG_FORCE_CLIM, (int)((seed / 2) % 4));
+      gc_debug(GQ_DBG_SET_SEED, (int32_t)(seed * 6007u));
+      gc_set_depth(40);
+      weather(GQ_W_CLEAR, 180);
+      gc_debug(GQ_DBG_ADD_VILLAGERS, pop);
+      int wall = 7 * 60 + 59, built_at = -1;
+      for (int m = 0; m < 4 * 1440; m++) {
+        minute(wall);
+        if (m % 90 == 0) { gc_debug(GQ_DBG_WOOD, 900); gc_debug(GQ_DBG_FAITH, 600); gc_debug(GQ_DBG_FOOD, 600); }
+        if (m == 1440) gc_debug(GQ_DBG_SICK, 0);                        // day 1
+        if (built_at < 0 && m > 1440 && vq(Q_BLD + B_INFIRM) >= 1) built_at = m - 1440;
+      }
+      std::printf("seed %u pop %d: infirmary %d minutes after the first sickness, %d aborts\n", seed, pop, built_at, vq(Q_ABORTS));
+      CHECK(built_at >= 0 && built_at <= 3 * 1440);
+      CHECK(vq(Q_ABORTS) < 40);
+    }
 }
 
 static void test_no_infirmary() {
@@ -557,6 +585,7 @@ int main(int argc, char** argv) {
   if (!only || std::strstr("test_cold_wood", only)) test_cold_wood();
   if (!only || std::strstr("test_risk", only)) test_risk();
   if (!only || std::strstr("test_healing", only)) test_healing();
+  if (!only || std::strstr("unreachable", only)) test_unreachable_site();
   if (!only || std::strstr("test_no_infirmary", only)) test_no_infirmary();
   if (!only || std::strstr("test_untreated_deaths", only)) test_untreated_deaths();
   if (!only || std::strstr("test_rainy_day_safe", only)) test_rainy_day_safe();
