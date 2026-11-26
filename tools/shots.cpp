@@ -2,6 +2,10 @@
 //   shots screen out.ppm seed landform climate [ticks [minutes]]   what the clock shows (240x240), after some walking and
 //                                                   'minutes' simulated minutes of village life (clock from 06:00)
 //   shots map    out.ppm seed landform climate           the whole 512x512 map (the camera is moved over it)
+// Extra arguments after 'minutes' (r4): mode boost
+//   mode  town  the camera is put over the village green;  cast  run until the shaman raises his staff, band shows his project;
+//         pond  run until a pond is dug (shot just after, the camera follows the shaman)
+//   boost  faith added every simulated hour (a rich world, to see the shaman work early)
 // landform 0..5 or -1 and climate 0..3 or -1 mean "from the seed".
 #include <cstdio>
 #include <cstdlib>
@@ -25,12 +29,33 @@ int main(int argc, char** argv) {
   gc_debug(GQ_DBG_FORCE_CLIM, cl);
   gc_debug(GQ_DBG_SET_SEED, (int32_t)seed);
   int minutes = argc > 7 ? std::atoi(argv[7]) : 0;
+  const char* mode = argc > 8 ? argv[8] : "";
+  int boost = argc > 9 ? std::atoi(argv[9]) : 0;
   gc_set_clock(10, 24, 1);
   gc_set_live_weather(GQ_W_CLEAR, 214, 0);
   gc_set_status(0, "IP 192.168.1.50");
   if (minutes > 0) {
     int wall = 6 * 60;
-    for (int m = 0; m < minutes; m++) { wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1); for (int i = 0; i < 8; i++) gc_tick(500); }
+    for (int m = 0; m < minutes; m++) {
+      wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1);
+      for (int i = 0; i < 8; i++) gc_tick(500);
+      if (boost && m % 60 == 0) gc_debug(GQ_DBG_FAITH, (int)gc_query(GQ_Q_VILLAGE + 3) + boost);
+    }
+    if (mode[0] == 'c' || mode[0] == 'p') {          // run on until the picture is there
+      for (int m = 0; m < 6 * 1440; m++) {
+        if (mode[0] == 'c' && gc_query(GQ_Q_HERO_ACT) == GQ_ACT_CAST) break;
+        if (mode[0] == 'p' && gc_query(GQ_Q_VILLAGE + 33) > 0) break;
+        wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1);
+        for (int i = 0; i < 8; i++) { gc_tick(500); if (mode[0] == 'c' && gc_query(GQ_Q_HERO_ACT) == GQ_ACT_CAST) break; }
+        if (boost && m % 60 == 0) gc_debug(GQ_DBG_FAITH, (int)gc_query(GQ_Q_VILLAGE + 3) + boost);
+      }
+      if (mode[0] == 'c') for (int i = 0; i < 2; i++) gc_tick(150);
+      gc_debug(GQ_DBG_BAND, 5);
+    }
+    if (mode[0] == 't') {
+      int sx = (int)gc_query(GQ_Q_START_X), sy = (int)gc_query(GQ_Q_START_Y);
+      gc_debug(GQ_DBG_SET_CAM, (sx * 16 - 112) + 1024 * (sy * 16 - 96));
+    }
   }
   for (int i = 0; i < ticks * 4; i++) gc_tick(250);
   static uint16_t strip[GC_STRIP_PIXELS];

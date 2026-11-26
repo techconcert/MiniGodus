@@ -22,7 +22,7 @@ static uint8_t  s_plot[3][2];                            // reserved flat 3x3 pl
 static uint16_t s_ramp[10];                              // the last ramps he cut (x | y << 5), 0xFFFF = none
 static uint8_t  s_rampn, s_cool[N_COUNT];
 static uint32_t s_spent;
-static uint16_t s_casts;
+static uint16_t s_casts, s_ponds, s_plots;
 static uint8_t  s_wx, s_wy, s_has_op;
 static int8_t   s_wd, s_ld;
 static uint8_t  s_lx, s_ly, s_skip[4][2], s_skipn;       // the last ramp tile he cut, and tiles that could not be mended (they tug both ways)
@@ -36,7 +36,7 @@ void shaman_reset(void) {
   for (int i = 0; i < 3; i++) s_plot[i][0] = s_plot[i][1] = 255;
   for (int i = 0; i < 10; i++) s_ramp[i] = 0xFFFF;
   for (int i = 0; i < N_COUNT; i++) s_cool[i] = 0;
-  s_rampn = 0; s_spent = 0; s_casts = 0; s_ld = 0; s_lx = s_ly = 255; s_skipn = 0;
+  s_rampn = 0; s_spent = 0; s_casts = 0; s_ponds = s_plots = 0; s_ld = 0; s_lx = s_ly = 255; s_skipn = 0;
   for (int i = 0; i < 4; i++) s_skip[i][0] = s_skip[i][1] = 255;
   uint32_t h = G.s.seed * 2654435761u;
   h ^= h >> 15;
@@ -89,7 +89,7 @@ static int beds_planned(void) {
   return n;
 }
 static int near_coast(void) {
-  for (int y = 0; y < WM; y++) for (int x = 0; x < WM; x++) if (hh(x, y) <= 1 && iab(x - cx()) + iab(y - cy()) <= 12) return 1;
+  for (int y = 0; y < WM; y++) for (int x = 0; x < WM; x++) if (hh(x, y) <= 1 && iab(x - cx()) + iab(y - cy()) <= 16) return 1;
   return 0;
 }
 static int plot_free(void) { for (int i = 0; i < 3; i++) if (s_plot[i][0] != 255) return 1; return 0; }
@@ -238,17 +238,38 @@ static int feasible(int x, int y, int w, int h, int H) {
 
 static int count_reach(void) { int n = 0; for (int i = 0; i < WM * WM; i++) if (g_dist[i] != 255) n++; return n; }
 
-// Is the village still in one piece with the footprint blocked? (g_dist must hold the flow from the green.)
+// 1 if a walkable tile of the flow beside the rectangle (corners do not count) is reachable
+static int ring_access(int x, int y, int w, int h) {
+  for (int j = -1; j <= h; j++)
+    for (int i = -1; i <= w; i++) {
+      if ((i == -1 || i == w) && (j == -1 || j == h)) continue;
+      if (i >= 0 && i < w && j >= 0 && j < h) continue;
+      int tx = x + i, ty = y + j;
+      if (tx >= 0 && ty >= 0 && tx < WM && ty < WM && g_dist[ty * WM + tx] != 255) return 1;
+    }
+  return 0;
+}
+
+// Is the village still in one piece with the footprint blocked, and does every building (and the new one) keep a way in?
+// (g_dist must hold the flow from the green.)
 static int keeps_connected(int ax, int ay, int w, int h, int fish) {
   int base = count_reach(), fr = 0;
+  uint32_t had[2] = {0, 0};
   uint8_t keep[9];
+  for (int b = 0; b < MAXB; b++) if (bused(b)) { int bw_, bh_; bdims(b, &bw_, &bh_); if (ring_access(B[b].x, B[b].y, bw_, bh_)) had[b >> 5] |= 1u << (b & 31); }
   for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (g_dist[(ay + j) * WM + ax + i] != 255) fr++;
   for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { keep[j * 3 + i] = g_map[(ay + j) * WM + ax + i]; world_set_built(ax + i, ay + j, 1); }
   (void)fish;
   world_flow(cx(), cy());
-  int after = count_reach();
+  int ok = count_reach() == base - fr && ring_access(ax, ay, w, h);
+  for (int b = 0; b < MAXB && ok; b++)
+    if (bused(b) && (had[b >> 5] & (1u << (b & 31)))) {
+      int bw_, bh_;
+      bdims(b, &bw_, &bh_);
+      if (!(ax < B[b].x + bw_ && ax + w > B[b].x && ay < B[b].y + bh_ && ay + h > B[b].y) && !ring_access(B[b].x, B[b].y, bw_, bh_)) ok = 0;
+    }
   for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) g_map[(ay + j) * WM + ax + i] = keep[j * 3 + i];
-  return after == base - fr;
+  return ok;
 }
 
 // The best possible spot for kind k. Returns 1 and fills *out, or 0.
@@ -371,7 +392,7 @@ static void finish_project(void) {
   if (p.kind == PK_PLOT) {
     int slot = 0;
     for (int i = 0; i < 3; i++) if (s_plot[i][0] == 255) { slot = i; break; }
-    s_plot[slot][0] = p.x; s_plot[slot][1] = p.y;
+    s_plot[slot][0] = p.x; s_plot[slot][1] = p.y; s_plots++;
     return;
   }
   if (p.kind == PK_POND) {
@@ -380,6 +401,7 @@ static void finish_project(void) {
       for (int i = 0; i < p.w && fish < 2; i++)
         if ((i + j) % 2 == 0 && hh(p.x + i, p.y + j) <= 1) { uint8_t& b = g_map[(p.y + j) * WM + p.x + i]; b = (uint8_t)((b & 0x3F) | (OB_BUSH << 6)); fish++; }
     for (int j = 0; j < p.h; j++) for (int i = 0; i < p.w; i++) mark_tile(p.x + i, p.y + j);
+    s_ponds++;
     return;
   }
   // a building: check the plot once more, then lay out the site
@@ -507,7 +529,7 @@ static int start_project(int k, int nolevel_unused) {
 }
 
 // placeholder hooks for later releases: r5 gives the infirmary a sickness to heal, r6 the monument its spare faith
-static int need_health(int weak) { return weak > 0 && bcount(B_INFIRM, 1) == 0 ? 55 : 0; }
+static int need_health(int weak) { return (weak > 0 || s_sick) && bcount(B_INFIRM, 1) == 0 ? 55 : 0; }
 static int need_monument(void) { return 0; }
 
 static int water_far(void) {            // some home has no water within 8 tiles
@@ -554,7 +576,7 @@ static void shaman_plan(void) {
   int src = (fields > 0) + (orch > 0) + (pens > 0) + (fish > 0);
   if (s_food < (uint16_t)(p * 6)) sc[N_FOOD] = 95;
   else if (fields * 5 < p + 2) sc[N_FOOD] = 75;
-  else if (p >= 8 && src < 3) sc[N_FOOD] = 40;
+  else if ((p >= 10 && src < 4) || (p >= 8 && src < 3)) sc[N_FOOD] = 40;
   if (beds < p) sc[N_HOUSING] = 100; else if (beds < p + 2) sc[N_HOUSING] = 65;
   if (p >= 2 && water_far()) sc[N_WATER] = 85;
   if (!coast && p >= 2) sc[N_POND] = 80;

@@ -21,6 +21,7 @@ static Vil      V[MAXV];
 static Bld      B[MAXB];
 static uint8_t  s_home[MAXV];                    // building index of each villager's bed, 255 = none
 static uint16_t s_food, s_wood, s_faith, s_deaths, s_births;
+static uint8_t  s_sick;                                // somebody has been weak (r5: sick): an infirmary is wanted
 static uint8_t  s_src, s_content, s_roles_dirty;      // food sources today (bits: grain, fruit, animal, fish), content today, roles need a refresh
 static uint8_t  s_water, s_vanim, s_rr, s_woke, s_last_plan;
 static uint32_t s_vacc, s_anim_acc, s_rng, s_earned;
@@ -344,7 +345,7 @@ static void meal(int m) {
       mark_tile(V[i].x, V[i].y);
     } else {
       set_hunger(i, hunger(i) + 1);
-      if (hunger(i) >= HUNGER_WEAK) V[i].fl |= F_WEAK;
+      if (hunger(i) >= HUNGER_WEAK) { V[i].fl |= F_WEAK; s_sick = 1; }
       if (hunger(i) >= HUNGER_DEATH + healer) kill(i);
     }
   }
@@ -384,7 +385,7 @@ void village_minute(int m, int night) {
     for (int i = 0; i < MAXV; i++) {
       if (!used(i) || ((vact(i) == A_SLEEP) && m % 60 != 0)) continue;
       set_thirst(i, thirst(i) + 1);
-      if (thirst(i) >= 28) V[i].fl |= F_WEAK;
+      if (thirst(i) >= 28) { V[i].fl |= F_WEAK; s_sick = 1; }
       if (thirst(i) >= 31 && m % 60 == 0) { set_hunger(i, hunger(i) + 1); if (hunger(i) >= HUNGER_DEATH + 1) kill(i); }
     }
   for (int i = 0; i < MAXV; i++) {
@@ -694,6 +695,8 @@ int village_stat(int which) {
     case 30: return unreachable_buildings();
     case 31: return s_pers;
     case 32: return count_ramps();
+    case 33: return s_ponds;
+    case 34: return s_plots;
     case 14: { int n = 0; for (int i = 0; i < MAXV; i++) if (used(i) && vact(i) == A_SLEEP) n++; return n; }
     default: break;
   }
@@ -717,7 +720,7 @@ void village_reset(int mix) {
   s_rng = (uint32_t)mix * 2654435761u + 0x9e3779b9u;
   if (!s_rng) s_rng = 1;
   s_food = 18; s_wood = 12; s_faith = 0; s_water = 0; s_deaths = s_births = 0;
-  s_src = s_content = s_roles_dirty = 0; s_earned = 0;
+  s_sick = 0; s_src = s_content = s_roles_dirty = 0; s_earned = 0;
   shaman_reset();
   s_vacc = s_anim_acc = 0; s_vanim = 0; s_rr = 0; s_woke = 0; s_last_plan = 255;
   place_start_tent();
@@ -769,7 +772,7 @@ void village_unpack(const uint8_t* p) {
   if (s_wood > 999) s_wood = 999;
   if (s_faith > 999) s_faith = 999;
   s_deaths = s_births = 0; s_vacc = s_anim_acc = 0; s_vanim = 0; s_rr = 0; s_woke = 0; s_last_plan = 255;
-  s_src = s_content = s_roles_dirty = 0; s_earned = 0;
+  s_sick = 0; s_src = s_content = s_roles_dirty = 0; s_earned = s_faith;
   shaman_reset();
   int nb = 0;
   for (int k = 0; k < p[2]; k++) {
@@ -820,8 +823,8 @@ void village_debug(int cmd, int32_t arg) {
       rebuild_homes(); assign_roles();
       break;
     }
-    case 4: s_faith = (uint16_t)(arg < 0 ? 0 : (arg > 999 ? 999 : arg)); break;
-    case 3: for (int k = 0; k < MAXV; k++) if (used(k)) { set_thirst(k, arg < 0 ? 0 : arg); if (arg >= 28) V[k].fl |= F_WEAK; } break;
+    case 4: { int f = arg < 0 ? 0 : (arg > 999 ? 999 : arg); s_earned += (uint32_t)(f - (int)s_faith); s_faith = (uint16_t)f; break; }
+    case 3: for (int k = 0; k < MAXV; k++) if (used(k)) { set_thirst(k, arg < 0 ? 0 : arg); if (arg >= 28) { V[k].fl |= F_WEAK; s_sick = 1; } } break;
     default: break;
   }
 }
