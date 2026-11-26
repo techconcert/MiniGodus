@@ -6,8 +6,10 @@
 #include "gc_internal.h"
 #include "world.h"
 
+#if GQ_TEST_SCENE      // the flat tile map of the display test only; the world scene uses g_map (world.cpp)
 uint8_t  g_ground[GC_ROWS][GC_COLS];
 uint8_t  g_obj[GC_ROWS][GC_COLS];
+#endif
 uint16_t g_pal[16];
 uint16_t g_wpal[16];    // world palette of the current climate
 uint16_t g_act[16];     // palette for actors and items (wash and tint, no season remap)
@@ -174,6 +176,7 @@ void draw_text(uint16_t* out, int y0, int x, int y, const char* s, uint16_t c, i
   }
 }
 
+#if GQ_TEST_SCENE
 void render_ground_row(uint16_t* out, int s, uint8_t water_frame) {
   for (int tx = 0; tx < GC_COLS; tx++) {
     uint8_t g = g_ground[s][tx];
@@ -183,6 +186,7 @@ void render_ground_row(uint16_t* out, int s, uint8_t water_frame) {
     if (o != T_NONE) blit_tile(out, tx * GC_TILE, GC_TILES(o), 1);
   }
 }
+#endif
 
 // ------------------------------------------------------------ test scene
 #if GQ_TEST_SCENE

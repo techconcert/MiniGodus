@@ -6,11 +6,10 @@ uint8_t   g_map[WM * WM];
 WorldInfo g_world;
 uint8_t   g_dist[WM * WM];
 
-// per tile: four quarter art ids (NW, NE, SW, SE), and for each quarter the kind of the neighbour it blends with
+// per tile: four quarter art ids (NW, NE, SW, SE); the kind of the neighbour a quarter blends with follows from its art
 alignas(4) static uint8_t g_qa[WM * WM * 4];
-static uint8_t  g_qo[WM * WM * 2];          // two nibbles per byte: quarters 0,1 and 2,3
 static uint32_t g_anim[WM];                 // bit x set: tile (x, row) has an animated quarter
-static uint16_t g_lut[KIND_COUNT * KIND_COUNT][16];
+static const uint16_t* s_pal;               // world palette (g_wpal): the role tables are computed per quarter, not stored
 
 static inline int TI(int x, int y) { return y * WM + x; }
 
@@ -434,8 +433,6 @@ void quarts_rebuild(int x0, int y0, int x1, int y1) {
         g_qa[i * 4 + q] = (uint8_t)a;
         if (a < ART_AN_COUNT) anim = 1;
       }
-      g_qo[i * 2] = (uint8_t)(oth[0] | (oth[1] << 4));
-      g_qo[i * 2 + 1] = (uint8_t)(oth[2] | (oth[3] << 4));
       if (anim) g_anim[y] |= 1u << x; else g_anim[y] &= ~(1u << x);
     }
   }
@@ -443,33 +440,52 @@ void quarts_rebuild(int x0, int y0, int x1, int y1) {
 
 int quarts_anim_rows(int ty) { return (ty >= 0 && ty < WM) ? (int)g_anim[ty] : 0; }
 
-// Role lookup per (own kind, other kind): role 1..13 -> palette slot -> RGB565.
+// Role lookup for a quarter of a tile of kind `own` that blends with kind `oth`: role 1..13 -> RGB565.
 // roles: 1 A dark, 2 A, 3 A light, 4 B dark, 5 B, 6 B light, 7 rim dark, 8 rim light, 9 face dark, 10 face, 11 face light, 12 sparkle, 13 shadow
-void quarts_palette(const uint16_t* pal) {
+static void role_table(uint16_t* l, int own, int oth) {
   static const uint8_t RAMP[KIND_COUNT][3] = {
     {2, 2, 3}, {2, 3, 4}, {7, 6, 6}, {8, 9, 10}, {9, 10, 11}, {10, 11, 12}, {11, 12, 12}, {15, 14, 4}, {4, 5, 5}};
-  for (int own = 0; own < KIND_COUNT; own++)
-    for (int oth = 0; oth < KIND_COUNT; oth++) {
-      uint16_t* l = g_lut[own * KIND_COUNT + oth];
-      const uint8_t* a = RAMP[own]; const uint8_t* b = RAMP[oth];
-      int upper = own > oth ? own : oth;                 // which tile owns the cliff face material
-      int upk = (own == KIND_SNOW || oth == KIND_SNOW) ? KIND_SNOW : upper;
-      int rock = (upper == 7);
-      int shore = own <= 1 || oth <= 1;
-      l[0] = pal[0];
-      l[1] = pal[a[0]]; l[2] = pal[a[1]]; l[3] = pal[a[2]];
-      l[4] = pal[b[0]]; l[5] = pal[b[1]]; l[6] = pal[b[2]];
-      l[7] = pal[shore ? 7 : 15];
-      l[8] = pal[5];
-      l[9] = pal[15]; l[10] = pal[rock ? 14 : 13]; l[11] = pal[rock ? 4 : (upk == KIND_SNOW ? 5 : 7)];
-      l[12] = pal[own == KIND_SNOW ? 4 : 5];
-      l[13] = pal[15];
-      l[14] = l[2]; l[15] = l[2];
-    }
+  const uint16_t* pal = s_pal;
+  const uint8_t* a = RAMP[own]; const uint8_t* b = RAMP[oth];
+  int upper = own > oth ? own : oth;                 // which tile owns the cliff face material
+  int upk = (own == KIND_SNOW || oth == KIND_SNOW) ? KIND_SNOW : upper;
+  int rock = (upper == 7);
+  int shore = own <= 1 || oth <= 1;
+  l[0] = pal[0];
+  l[1] = pal[a[0]]; l[2] = pal[a[1]]; l[3] = pal[a[2]];
+  l[4] = pal[b[0]]; l[5] = pal[b[1]]; l[6] = pal[b[2]];
+  l[7] = pal[shore ? 7 : 15];
+  l[8] = pal[5];
+  l[9] = pal[15]; l[10] = pal[rock ? 14 : 13]; l[11] = pal[rock ? 4 : (upk == KIND_SNOW ? 5 : 7)];
+  l[12] = pal[own == KIND_SNOW ? 4 : 5];
+  l[13] = pal[15];
+  l[14] = l[2]; l[15] = l[2];
+}
+
+void quarts_palette(const uint16_t* pal) { s_pal = pal; }
+
+// The kind of neighbour a quarter blends with, from its art (fill art: none)
+static int other_kind(int art, int own, int h) {
+  if (art < ART_FILL_GROUND) {
+    if (art < ART_WATER_UP) return own;
+    if (art < ART_WATER_LOW) return 0;
+    if (art < ART_SHORE_UP) return 1;
+    if (art < ART_SHORE_LOW) return 1;
+    return 2;
+  }
+  if (art < ART_BEACH_UP) return own;
+  if (art < ART_BEACH_LOW) return 2;
+  if (art < ART_SNOW_UP) return 3;
+  if (art < ART_SNOW_LOW) return h;
+  if (art < ART_UPN) return KIND_SNOW;
+  if (art < ART_LON) return h > 0 ? h - 1 : 0;
+  return h < 7 ? h + 1 : 7;
 }
 
 // Draws the quarters of the strip (240x16) whose top is world pixel row wy0 and whose left is world column wx0.
 void quarts_render(uint16_t* out, int wx0, int wy0, int frame) {
+  uint16_t lut[16];
+  int lut_own = -1, lut_oth = -1;
   for (int qy = wy0 >> 3; qy <= (wy0 + 15) >> 3; qy++) {
     int py = qy * 8 - wy0;
     int r0 = py < 0 ? -py : 0, r1 = py + 8 > GC_STRIP_H ? GC_STRIP_H - py : 8;
@@ -481,9 +497,9 @@ void quarts_render(uint16_t* out, int wx0, int wy0, int frame) {
       int q = qyi * 2 + qxi;
       int art = g_qa[i * 4 + q];
       if (art < ART_AN_COUNT) art |= frame;
-      int oth = (g_qo[i * 2 + (q >> 1)] >> ((q & 1) * 4)) & 15;
       int own = map_kind(g_map[i]);
-      const uint16_t* lut = g_lut[own * KIND_COUNT + oth];
+      int oth = other_kind(art & ~(art < ART_AN_COUNT ? 1 : 0), own, MT_H(g_map[i]));
+      if (own != lut_own || oth != lut_oth) { role_table(lut, own, oth); lut_own = own; lut_oth = oth; }
       const uint8_t* src = GC_QUARTS(art);
       for (int r = r0; r < r1; r++) {
         uint16_t* dst = out + (py + r) * GC_W + px;
