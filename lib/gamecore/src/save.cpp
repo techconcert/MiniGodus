@@ -2,6 +2,7 @@
 // MiniGodus has its own magic (GQ_SAVE_MAGIC), different from GeekQuest's, so a GeekQuest save found in the shared
 // flash record is rejected by gq_save_validate (GC_SAVE_ERR_MAGIC) and the other way round.
 #include "gc_internal.h"
+#include "world.h"
 
 uint32_t gq_save_crc(const uint8_t* p, int n) {
   uint32_t c = 0xFFFFFFFFu;
@@ -36,4 +37,18 @@ void gq_save_sanitize(GqSave* s) {
   if (s->seed == 0) s->seed = 1;
   if (s->minute > 1439) s->minute = 1439;
   for (int i = 0; i < (int)sizeof(s->reserved); i++) s->reserved[i] = 0;
+  s->pad0 = 0;
+  if (s->hist_n > 4) s->hist_n = 4;
+  for (int i = 0; i < 4; i++) {
+    if (s->hist_land[i] >= LF_COUNT) s->hist_land[i] = 0;
+    if (s->hist_clim[i] >= CL_COUNT) s->hist_clim[i] = 0;
+  }
+  if (s->hist_n == 0) {      // no world recorded: the one the seed gives
+    int l, c;
+    world_pick(s->seed, -1, -1, &l, &c);
+    s->hist_n = 1; s->hist_seed[0] = s->seed; s->hist_land[0] = (uint8_t)l; s->hist_clim[0] = (uint8_t)c;
+  }
+  s->hist_seed[0] = s->seed;
+  s->landform = s->hist_land[0];
+  s->climate = s->hist_clim[0];
 }

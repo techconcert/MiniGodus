@@ -20,8 +20,10 @@ static const uint8_t HERO_CELL_BASE[3] = {0, 3, 8};
 enum { P_OUTLINE = 1, P_SAND = 7, P_WHITE = 13, P_GREY = 14, P_YELLOW = 15 };
 
 // ---- shared state (gamecore.cpp) ----
+#if GQ_TEST_SCENE
 extern uint8_t  g_ground[GC_ROWS][GC_COLS];
 extern uint8_t  g_obj[GC_ROWS][GC_COLS];
+#endif
 extern uint16_t g_pal[16];      // tinted palette for the world
 extern uint16_t g_act[16];      // palette for actors
 extern uint16_t g_ui[16];       // untinted palette for HUD / text
@@ -44,9 +46,12 @@ void blit_sprite(uint16_t* out, int y0, int sx, int sy, gc_cell cell, int flip, 
 void fill_rect(uint16_t* out, int y0, int x, int y, int w, int h, uint16_t c);
 void draw_text(uint16_t* out, int y0, int x, int y, const char* s, uint16_t c, int scale, int shadow);
 void draw_text_n(uint16_t* out, int y0, int x, int y, const char* s, int n, uint16_t c, int scale);
+#if GQ_TEST_SCENE
 void render_ground_row(uint16_t* out, int s, uint8_t water_frame);
+#endif
 
 // ---- the MiniGodus scene (godus.cpp) ----
+void build_palettes(void);
 void world_init(uint32_t seed);
 void world_tick(uint32_t dt);
 void world_render(int s, uint16_t* out);
