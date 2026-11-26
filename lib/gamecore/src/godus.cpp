@@ -399,11 +399,12 @@ static void weather_icon(uint16_t* out, int y0, int x, int y, int w, int night) 
   }
 }
 
-static int put_num(char* p, int n) {      // 0..999
+static int put_num(char* p, int n) {      // 0..9999
   if (n < 0) n = 0;
-  if (n > 999) n = 999;
+  if (n > 9999) n = 9999;
   int k = 0;
-  if (n >= 100) p[k++] = (char)('0' + n / 100);
+  if (n >= 1000) p[k++] = (char)('0' + n / 1000);
+  if (n >= 100) p[k++] = (char)('0' + (n / 100) % 10);
   if (n >= 10) p[k++] = (char)('0' + (n / 10) % 10);
   p[k++] = (char)('0' + n % 10);
   p[k] = 0;

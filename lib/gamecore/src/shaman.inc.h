@@ -9,10 +9,10 @@
 // reserved tiles. Near the village neighbouring tiles differ by at most one layer: after every project he cuts ramps
 // until no step is left. Everything lives in about 100 bytes; every search uses the shared distance buffer g_dist.
 
-enum { N_FOOD, N_HOUSING, N_WATER, N_HEALTH, N_WOOD, N_GROWTH, N_FAITH, N_MONUMENT, N_POND, N_COUNT };
-enum { PK_NONE, PK_BUILD, PK_POND, PK_PLOT };
-enum { SP_POND = B_COUNT, SP_PLOT = B_COUNT + 1 };      // search kinds besides the buildings
-enum { WAIT_MAX = 36, MAX_OPS = 90 };
+enum { N_FOOD, N_HOUSING, N_WATER, N_HEALTH, N_WOOD, N_GROWTH, N_FAITH, N_MONUMENT, N_POND, N_SHAPE, N_COUNT };
+enum { PK_NONE, PK_BUILD, PK_POND, PK_PLOT, PK_LEVEL };
+enum { SP_POND = B_COUNT, SP_PLOT = B_COUNT + 1, SP_LEVEL = B_COUNT + 2 };      // search kinds besides the buildings
+enum { WAIT_MAX = 36, MAX_OPS = 100 };
 
 struct Proj { uint8_t kind, tp, var, x, y, w, h, hgt, ops, wait; };   // hgt 255: no levelling (fishing hut)
 static Proj     P;
@@ -20,9 +20,9 @@ static uint8_t  s_pers, s_waiting, s_ramping;
 static uint8_t  s_fail[4][2], s_failn;                   // spots where a project failed
 static uint8_t  s_plot[3][2];                            // reserved flat 3x3 plots (x, 255 = none)
 static uint16_t s_ramp[10];                              // the last ramps he cut (x | y << 5), 0xFFFF = none
-static uint8_t  s_rampn, s_cool[N_COUNT];
+static uint8_t  s_rampn, s_cool[N_COUNT], s_mend_cool;
 static uint32_t s_spent;
-static uint16_t s_casts, s_ponds, s_plots;
+static uint16_t s_casts, s_ponds, s_plots, s_levels;
 static uint8_t  s_wx, s_wy, s_has_op;
 static int8_t   s_wd, s_ld;
 static uint8_t  s_lx, s_ly, s_skip[4][2], s_skipn;       // the last ramp tile he cut, and tiles that could not be mended (they tug both ways)
@@ -31,12 +31,12 @@ static int hh(int x, int y) { return MT_H(g_map[y * WM + x]); }
 static int iab(int v) { return v < 0 ? -v : v; }
 
 void shaman_reset(void) {
-  P.kind = PK_NONE; s_waiting = s_ramping = s_has_op = 0; s_failn = 0;
+  P.kind = PK_NONE; s_waiting = s_ramping = s_has_op = 0; s_failn = 0; s_mend_cool = 0;
   for (int i = 0; i < 4; i++) s_fail[i][0] = s_fail[i][1] = 255;
   for (int i = 0; i < 3; i++) s_plot[i][0] = s_plot[i][1] = 255;
   for (int i = 0; i < 10; i++) s_ramp[i] = 0xFFFF;
   for (int i = 0; i < N_COUNT; i++) s_cool[i] = 0;
-  s_rampn = 0; s_spent = 0; s_casts = 0; s_ponds = s_plots = 0; s_ld = 0; s_lx = s_ly = 255; s_skipn = 0;
+  s_rampn = 0; s_spent = 0; s_casts = 0; s_ponds = s_plots = s_levels = 0; s_ld = 0; s_lx = s_ly = 255; s_skipn = 0;
   for (int i = 0; i < 4; i++) s_skip[i][0] = s_skip[i][1] = 255;
   uint32_t h = G.s.seed * 2654435761u;
   h ^= h >> 15;
@@ -92,7 +92,8 @@ static int near_coast(void) {
   for (int y = 0; y < WM; y++) for (int x = 0; x < WM; x++) if (hh(x, y) <= 1 && iab(x - cx()) + iab(y - cy()) <= 16) return 1;
   return 0;
 }
-static int plot_free(void) { for (int i = 0; i < 3; i++) if (s_plot[i][0] != 255) return 1; return 0; }
+// 1 while a flattened 3x3 plot is waiting for the next home
+static int plot_ready(void) { for (int i = 0; i < 3; i++) if (s_plot[i][0] != 255) return 1; return 0; }
 static int bad_spot(int x, int y) { for (int i = 0; i < 4; i++) if (s_fail[i][0] == x && s_fail[i][1] == y) return 1; return 0; }
 static void add_fail(int x, int y) { s_fail[s_failn & 3][0] = (uint8_t)x; s_fail[s_failn & 3][1] = (uint8_t)y; s_failn++; }
 
@@ -100,10 +101,11 @@ static void add_fail(int x, int y) { s_fail[s_failn & 3][0] = (uint8_t)x; s_fail
 struct Cand { uint8_t x, y, var, H; int16_t cost, faith; };
 enum { NC = 14, NOSITE = -30000 };
 
-static int nvars(int k) { return k == SP_POND ? 2 : (k == SP_PLOT ? 1 : NVAR[k]); }
+static int nvars(int k) { return k == SP_POND ? 2 : (k == SP_PLOT ? 1 : (k == SP_LEVEL ? 3 : NVAR[k])); }
 static void kdim(int k, int var, int* w, int* h) {
   if (k == SP_POND) { *w = var ? 3 : 2; *h = var ? 2 : 3; }
   else if (k == SP_PLOT) { *w = *h = 3; }
+  else if (k == SP_LEVEL) { *w = var == 1 ? 5 : (var == 2 ? 3 : 4); *h = var == 2 ? 5 : (var == 1 ? 3 : 4); }
   else bdim(k, var, w, h);
 }
 static uint32_t hash2(int x, int y) { uint32_t h = (uint32_t)x * 73856093u ^ (uint32_t)y * 19349663u; h ^= h >> 13; h *= 0x5bd1e995u; return h ^ (h >> 15); }
@@ -174,7 +176,12 @@ static int eval_site(int k, int var, int ax, int ay, int nolevel, int* Hout, int
       if (c < best) { best = c; H = T; }
     }
   }
-  if (k == SP_PLOT && plotn) return NOSITE;
+  if ((k == SP_PLOT || k == SP_LEVEL) && plotn) return NOSITE;
+  if (k == SP_LEVEL) {                                         // wide land ahead of the town: only where something really changes
+    int ch = objs;
+    for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (hh(ax + i, ay + j) != H) ch++;
+    if (ch < 3) return NOSITE;
+  }
   if (nolevel && (best > 0 || objs)) return NOSITE;
   faith = best + objs;
   // ---- the ring around the plot
@@ -197,7 +204,7 @@ static int eval_site(int k, int var, int ax, int ay, int nolevel, int* Hout, int
         if (g_dist[y * WM + x] + 1 < dist) dist = g_dist[y * WM + x] + 1;
       }
     }
-  if (dist >= 250 || (k == SP_POND && (dist < 2 || dist > 12))) return NOSITE;
+  if (dist >= 250 || (k == SP_POND && (dist < 2 || dist > 12)) || (k == SP_LEVEL && dist > 15)) return NOSITE;
   if (nolevel && ring) return NOSITE;
   faith += ring;
   cost = faith + dist * 2 + plotn * (home || k == SP_PLOT ? -3 : 12) + repl_tiles * 5 + (int)(hash2(ax, ay) & 1);
@@ -205,6 +212,11 @@ static int eval_site(int k, int var, int ax, int ay, int nolevel, int* Hout, int
     int trees = 0;
     for (int y = ay - 3; y < ay + h + 3; y++) for (int x = ax - 3; x < ax + w + 3; x++) if (x >= 0 && y >= 0 && x < WM && y < WM && MT_OBJ(g_map[y * WM + x]) == OB_TREE) trees++;
     cost -= trees < 8 ? trees : 8;
+  }
+  if (k == SP_LEVEL) {                                         // he opens land towards forests and good soil
+    int trees = 0, rich = 0;
+    for (int y = ay - 2; y < ay + h + 2; y++) for (int x = ax - 2; x < ax + w + 2; x++) if (x >= 0 && y >= 0 && x < WM && y < WM) { trees += MT_OBJ(g_map[y * WM + x]) == OB_TREE; rich += MT_SOIL(g_map[y * WM + x]) == SOIL_FERTILE; }
+    cost -= (trees < 6 ? trees : 6) + (rich < 4 ? rich : 4);
   }
   if (k == B_FIELD)
     for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (MT_SOIL(g_map[(ay + j) * WM + ax + i]) == SOIL_FERTILE) cost -= 1;
@@ -296,7 +308,7 @@ static int pick_site(int k, Cand* out, int nolevel) {
     int w, h;
     kdim(k, c[i].var, &w, &h);
     world_flow(cx(), cy());
-    if (!keeps_connected(c[i].x, c[i].y, w, h, k == B_FISH)) continue;
+    if (k != SP_LEVEL && !keeps_connected(c[i].x, c[i].y, w, h, k == B_FISH)) continue;
     *out = c[i];
     return 1;
   }
@@ -340,6 +352,26 @@ static void place_start_tent(void) {
 }
 
 // ------------------------------------------------------------------ the executor
+static int skipped(int x, int y) { for (int q = 0; q < 4; q++) if (s_skip[q][0] == x && s_skip[q][1] == y) return 1; return 0; }
+static void add_skip(int x, int y) { s_skip[s_skipn & 3][0] = (uint8_t)x; s_skip[s_skipn & 3][1] = (uint8_t)y; s_skipn++; }
+
+// Would changing this tile cut the village in two or shut a building in? (g_dist is used)
+static int op_breaks(int x, int y, int d) {
+  if (d == 0) return 0;
+  world_flow(cx(), cy());
+  int base = count_reach();
+  uint32_t had[2] = {0, 0};
+  for (int b = 0; b < MAXB; b++) if (bused(b)) { int bw_, bh_; bdims(b, &bw_, &bh_); if (ring_access(B[b].x, B[b].y, bw_, bh_)) had[b >> 5] |= 1u << (b & 31); }
+  uint8_t keep = g_map[y * WM + x];
+  world_set_height(x, y, MT_H(keep) + d);
+  world_flow(cx(), cy());
+  int broke = count_reach() < base - 2;
+  for (int b = 0; b < MAXB && !broke; b++)
+    if (bused(b) && (had[b >> 5] & (1u << (b & 31)))) { int bw_, bh_; bdims(b, &bw_, &bh_); if (!ring_access(B[b].x, B[b].y, bw_, bh_)) broke = 1; }
+  g_map[y * WM + x] = keep;
+  return broke;
+}
+
 static int next_terra(int sx, int sy, int* tx, int* ty, int* dir) {
   int bd = 9999;
   for (int j = 0; j < P.h; j++)
@@ -347,6 +379,7 @@ static int next_terra(int sx, int sy, int* tx, int* ty, int* dir) {
       int x = P.x + i, y = P.y + j;
       uint8_t b = g_map[y * WM + x];
       int t = MT_H(b), d = -2;
+      if (skipped(x, y)) continue;
       if (MT_OBJ(b) && t >= 2) d = 0;
       else if (P.hgt != 255 && t != P.hgt) d = t < P.hgt ? 1 : -1;
       if (d == -2) continue;
@@ -395,6 +428,7 @@ static void finish_project(void) {
     s_plot[slot][0] = p.x; s_plot[slot][1] = p.y; s_plots++;
     return;
   }
+  if (p.kind == PK_LEVEL) { s_levels++; return; }
   if (p.kind == PK_POND) {
     int fish = 0;
     for (int j = 0; j < p.h && fish < 2; j++)
@@ -426,14 +460,13 @@ static void finish_project(void) {
 int shaman_target(int sx, int sy, int* tx, int* ty) {
   s_waiting = 0;
   if (P.kind == PK_NONE) return 0;
-  for (int guard = 0; guard < 3; guard++) {
+  for (int guard = 0; guard < 8; guard++) {
     if (s_has_op) { *tx = s_wx; *ty = s_wy; return 1; }
     int x = 0, y = 0, d = 0, found = 0;
-    if (P.ops < MAX_OPS) {
-      if (next_terra(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 0; }
-      else if (P.kind != PK_NONE && next_ramp(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 1; }
-    }
+    if (P.ops < MAX_OPS && next_terra(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 0; }
+    else if (P.ops < MAX_OPS + 70 && P.kind != PK_NONE && next_ramp(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 1; }
     if (!found) { finish_project(); return 0; }
+    if (d != 0 && op_breaks(x, y, d)) { add_skip(x, y); continue; }
     int cost = d == 0 ? 1 : step_cost(hh(x, y), hh(x, y) + d);
     if (s_faith < cost) { s_waiting = 1; return 0; }
     s_wx = (uint8_t)x; s_wy = (uint8_t)y; s_wd = (int8_t)d; s_has_op = 1;
@@ -442,7 +475,8 @@ int shaman_target(int sx, int sy, int* tx, int* ty) {
 }
 
 void shaman_abort(void) {
-  if (P.kind == PK_BUILD) { s_wood = (uint16_t)(s_wood + cost_wood(P.tp)); add_fail(P.x, P.y); }
+  if (P.kind == PK_BUILD) s_wood = (uint16_t)(s_wood + cost_wood(P.tp));
+  if (P.kind != PK_NONE) add_fail(P.x, P.y);
   P.kind = PK_NONE; s_has_op = 0;
 }
 
@@ -487,7 +521,7 @@ static void heal_terrain(void) {
     bdims(b, &w, &h);
     int H = hh(B[b].x, B[b].y);
     H = H < 3 ? 3 : (H > 5 ? 5 : H);
-    for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) world_set_height(B[b].x + i, B[b].y + j, H);
+    for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { world_set_height(B[b].x + i, B[b].y + j, H); world_clear_object(B[b].x + i, B[b].y + j); }
   }
   for (int guard = 0; guard < 400; guard++) {
     int x, y, d;
@@ -503,6 +537,7 @@ const char* shaman_label(void) {
   if (P.kind == PK_NONE) return 0;
   if (P.kind == PK_POND) return s_ramping ? "CUTTING RAMPS" : "DIGGING POND";
   if (P.kind == PK_PLOT) return s_ramping ? "CUTTING RAMPS" : "FLATTENING PLOT";
+  if (P.kind == PK_LEVEL) return s_ramping ? "CUTTING RAMPS" : "LEVELLING LAND";
   if (s_ramping) return "CUTTING RAMPS";
   const char* a = "BUILDING ";
   int n = 0;
@@ -521,9 +556,10 @@ static int start_project(int k, int nolevel_unused) {
   if (c.faith > (int)s_faith) return 2;
   int w, h;
   kdim(k, c.var, &w, &h);
-  P.kind = k == SP_POND ? PK_POND : (k == SP_PLOT ? PK_PLOT : PK_BUILD);
+  P.kind = k == SP_POND ? PK_POND : (k == SP_PLOT ? PK_PLOT : (k == SP_LEVEL ? PK_LEVEL : PK_BUILD));
   P.tp = (uint8_t)(k < B_COUNT ? k : 0); P.var = c.var; P.x = c.x; P.y = c.y; P.w = (uint8_t)w; P.h = (uint8_t)h; P.hgt = c.H; P.ops = 0; P.wait = 0;
   s_has_op = 0; s_ramping = 0;
+  for (int i = 0; i < 4; i++) s_skip[i][0] = s_skip[i][1] = 255;
   if (k < B_COUNT) s_wood = (uint16_t)(s_wood - cost_wood(k));
   return 1;
 }
@@ -558,12 +594,36 @@ static int try_kinds(const int* ks, int n, int* faith_short) {
   return 0;
 }
 
+// A building the village cannot get to any more (trees grew round it, ground moved): he clears the trees around it.
+static int mend(void) {
+  world_flow(cx(), cy());
+  for (int b = 0; b < MAXB; b++) {
+    if (!bused(b)) continue;
+    int bw_, bh_;
+    bdims(b, &bw_, &bh_);
+    if (ring_access(B[b].x, B[b].y, bw_, bh_)) continue;
+    int x0 = B[b].x - 2, y0 = B[b].y - 2, x1 = B[b].x + bw_ + 1, y1 = B[b].y + bh_ + 1, trees = 0;
+    if (x0 < 1) x0 = 1;
+    if (y0 < 1) y0 = 1;
+    if (x1 > WM - 2) x1 = WM - 2;
+    if (y1 > WM - 2) y1 = WM - 2;
+    for (int y = y0; y <= y1; y++) for (int x = x0; x <= x1; x++) if (MT_OBJ(g_map[y * WM + x]) && hh(x, y) >= 2) trees++;
+    if (!trees || s_faith < (uint16_t)trees) { s_mend_cool = 20; return 0; }
+    P.kind = PK_LEVEL; P.tp = 0; P.var = 0; P.x = (uint8_t)x0; P.y = (uint8_t)y0; P.w = (uint8_t)(x1 - x0 + 1); P.h = (uint8_t)(y1 - y0 + 1); P.hgt = 255; P.ops = 0; P.wait = 0;
+    s_has_op = 0; s_ramping = 0;
+    return 1;
+  }
+  return 0;
+}
+
 static void shaman_plan(void) {
   for (int i = 0; i < N_COUNT; i++) if (s_cool[i]) s_cool[i]--;
   if (P.kind != PK_NONE) {
-    if (s_waiting && ++P.wait > WAIT_MAX) { P.kind = PK_NONE; s_has_op = 0; s_waiting = 0; }
+    if (s_waiting && ++P.wait > WAIT_MAX) { shaman_abort(); s_waiting = 0; }
     return;
   }
+  if (s_mend_cool) s_mend_cool--;
+  else if (mend()) return;
   int p = pop();
   if (!p) return;
   int weak = 0;
@@ -582,11 +642,13 @@ static void shaman_plan(void) {
   if (!coast && p >= 2) sc[N_POND] = 80;
   sc[N_HEALTH] = need_health(weak);
   if (s_wood < 10 && bcount(B_LUMBER, 1) < 1 + p / 12 && p >= 4) sc[N_WOOD] = 60;
-  if (tr >= 1 && !plot_free()) sc[N_GROWTH] = 45;
+  if (tr >= 1 && !plot_ready()) sc[N_GROWTH] = 45;
   else if (tr >= 1 && beds < p + 3) sc[N_GROWTH] = 50;
   else if (p >= 10 && bcount(B_GRANARY, 1) < 1 + p / 24) sc[N_GROWTH] = 35;
   if (p >= 6 && bcount(B_SHRINE, 1) == 0) sc[N_FAITH] = 45;
   sc[N_MONUMENT] = need_monument();
+  // spare faith is put into the land: wide flat ground for the next tiers, a second pond for fish (r6 will keep a reserve for the monument)
+  if (s_faith * 5 >= (uint16_t)(60 + 4 * p) * 2) sc[N_SHAPE] = 30;
   // personality
   switch (s_pers) {
     case SH_FARMER: sc[N_FOOD] += sc[N_FOOD] ? 10 : 0; break;
@@ -624,11 +686,16 @@ static void shaman_plan(void) {
       case N_HEALTH: ks[n++] = B_INFIRM; break;
       case N_WOOD: ks[n++] = B_LUMBER; break;
       case N_GROWTH:
-        if (!plot_free() && tr >= 1) ks[n++] = SP_PLOT;
+        if (!plot_ready() && tr >= 1) ks[n++] = SP_PLOT;
         else if (tr >= 1 && beds < p + 3) ks[n++] = tr;
         else ks[n++] = B_GRANARY;
         break;
       case N_FAITH: ks[n++] = B_SHRINE; break;
+      case N_SHAPE:
+        if (saving) continue;
+        if (p >= 8 && s_ponds < 2 && s_faith >= 40) ks[n++] = SP_POND;
+        ks[n++] = SP_LEVEL;
+        break;
       default: continue;
     }
     if (saving) {                       // saving up for something big: only what costs no faith

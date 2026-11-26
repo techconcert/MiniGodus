@@ -53,10 +53,22 @@ int main(int argc, char** argv) {
       gc_debug(GQ_DBG_BAND, 5);
     }
     if (mode[0] == 't') {
-      int sx = (int)gc_query(GQ_Q_START_X), sy = (int)gc_query(GQ_Q_START_Y);
-      int px = sx * 16 - 112, py = sy * 16 - 96;
-      if (px < 0) px = 0;
-      if (py < 0) py = 0;
+      // the window of 15 x 13 tiles (between the bars) that shows the most buildings whole, nearest to the green
+      int bx[40], by[40], bw[40], bh[40], nb = 0;
+      for (int b = 0; b < 40; b++) {
+        int v = (int)gc_query(GQ_Q_VILLAGE + 110 + b);
+        if (v == -1 || v == 0) continue;
+        bx[nb] = v & 255; by[nb] = (v >> 8) & 255; bw[nb] = (v >> 16) & 15; bh[nb] = (v >> 20) & 15; nb++;
+      }
+      int sx = (int)gc_query(GQ_Q_START_X), sy = (int)gc_query(GQ_Q_START_Y), best = -1, tx0 = sx - 7, ty0 = sy - 6;
+      for (int y0 = 0; y0 <= 32 - 13; y0++)
+        for (int x0 = 0; x0 <= 32 - 15; x0++) {
+          int n = 0;
+          for (int k = 0; k < nb; k++) if (bx[k] >= x0 && by[k] >= y0 && bx[k] + bw[k] <= x0 + 15 && by[k] + bh[k] <= y0 + 13) n++;
+          int score = n * 100 - (std::abs(x0 + 7 - sx) + std::abs(y0 + 6 - sy));
+          if (score > best) { best = score; tx0 = x0; ty0 = y0; }
+        }
+      int px = tx0 * 16, py = ty0 * 16;
       gc_debug(GQ_DBG_SET_CAM, px + 1024 * py);
     }
   }

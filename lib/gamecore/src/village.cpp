@@ -277,8 +277,8 @@ void village_new_day(int night) {
     else if (vcls(i) == AGE_ADULT && d >= l - 4) { V[i].fl = (uint8_t)((V[i].fl & ~F_AGE) | AGE_ELDER); set_role(i, R_ELDER); }
   }
   rebuild_homes();
-  // food variety: three or more sources in a day make people content (+25% faith) until the next midnight
-  { int n = 0; for (int k = 0; k < 4; k++) if (s_src & (1 << k)) n++; s_content = n >= 3; s_src = 0; }
+  // food variety: three or more sources eaten in a day make people content (+25% faith) for the rest of that day
+  s_src = 0; s_content = 0;
   // animals breed when they are fed: a herder tends them and the stores are not empty
   int herders = 0;
   for (int i = 0; i < MAXV; i++) if (used(i) && vrole(i) == R_HERDER) herders++;
@@ -457,10 +457,11 @@ void village_minute(int m, int night) {
     for (int i = 0; i < MAXV; i++)
       if (used(i) && vact(i) != A_SLEEP && vact(i) != A_BED) { if (vcls(i) == AGE_ADULT) f++; else if (vcls(i) == AGE_ELDER) f += (shrine && vact(i) == A_WORK) ? 3 : 2; }
     int add = f / 2 + (f & 1) + (shrine ? 1 : 0);
+    { int n = 0; for (int k = 0; k < 4; k++) if (s_src & (1 << k)) n++; s_content = n >= 3; }       // three sources eaten so far today
     if (s_content) add += (add + 3) / 4;
     int before = s_faith;
     s_faith = (uint16_t)(s_faith + add);
-    if (s_faith > 999) s_faith = 999;
+    if (s_faith > 9999) s_faith = 9999;
     s_earned += (uint32_t)(s_faith - before);
   }
   { int p = pop(), cap = (p * 8 > 150 ? p * 8 : 150) + 100 * count_done(B_GRANARY); if (cap > 999) cap = 999; if (s_food > cap) s_food = (uint16_t)cap; }
@@ -697,6 +698,7 @@ int village_stat(int which) {
     case 32: return count_ramps();
     case 33: return s_ponds;
     case 34: return s_plots;
+    case 35: return s_levels;
     case 14: { int n = 0; for (int i = 0; i < MAXV; i++) if (used(i) && vact(i) == A_SLEEP) n++; return n; }
     default: break;
   }
@@ -770,7 +772,7 @@ void village_unpack(const uint8_t* p) {
   s_food = (uint16_t)(p[3] | (p[4] << 8)); s_wood = (uint16_t)(p[5] | (p[6] << 8)); s_faith = (uint16_t)(p[7] | (p[8] << 8)); s_water = p[9];
   if (s_food > 999) s_food = 999;
   if (s_wood > 999) s_wood = 999;
-  if (s_faith > 999) s_faith = 999;
+  if (s_faith > 9999) s_faith = 9999;
   s_deaths = s_births = 0; s_vacc = s_anim_acc = 0; s_vanim = 0; s_rr = 0; s_woke = 0; s_last_plan = 255;
   s_sick = 0; s_src = s_content = s_roles_dirty = 0; s_earned = s_faith;
   shaman_reset();
@@ -823,7 +825,7 @@ void village_debug(int cmd, int32_t arg) {
       rebuild_homes(); assign_roles();
       break;
     }
-    case 4: { int f = arg < 0 ? 0 : (arg > 999 ? 999 : arg); s_earned += (uint32_t)(f - (int)s_faith); s_faith = (uint16_t)f; break; }
+    case 4: { int f = arg < 0 ? 0 : (arg > 9999 ? 9999 : arg); s_earned += (uint32_t)(f - (int)s_faith); s_faith = (uint16_t)f; break; }
     case 3: for (int k = 0; k < MAXV; k++) if (used(k)) { set_thirst(k, arg < 0 ? 0 : arg); if (arg >= 28) { V[k].fl |= F_WEAK; s_sick = 1; } } break;
     default: break;
   }

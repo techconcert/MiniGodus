@@ -130,11 +130,12 @@ static int elevation(int landform, int x, int y) {
   }
 }
 
+static int s_rock_e = 262;                    // elevation from which land is rock (7): only the highest peaks
 static int height_of(int e) {
   if (e < 60) return 0;
   if (e < 84) return 1;
   if (e < 100) return 2;
-  if (e >= 262) return 7;
+  if (e >= s_rock_e) return 7;
   return 3 + imin(3, (e - 100) / 40);
 }
 
@@ -351,6 +352,20 @@ void world_generate(uint32_t seed, int landform, int climate) {
   int bias = 0, sea_edge = landform == LF_ISLAND || landform == LF_ARCH;
   for (int attempt = 0; attempt < 10; attempt++) {
     int land = 0;
+    {   // rock only on the highest peaks: at most 8% of the land (15% on the mountain plateau)
+      uint16_t hist[16];
+      int land_e = 0, rocky = 0;
+      for (int i = 0; i < 16; i++) hist[i] = 0;
+      for (int y = 0; y < WM; y++)
+        for (int x = 0; x < WM; x++) {
+          int e = elevation(landform, x, y) + bias;
+          if (e >= 100) land_e++;
+          if (e >= 262) { hist[imin(15, (e - 262) / 40)]++; rocky++; }
+        }
+      int quota = landform == LF_PLATEAU ? 10 : 4;
+      s_rock_e = 262;
+      for (int k = 0; k < 15 && rocky * 100 > quota * land_e; k++) { rocky -= hist[k]; s_rock_e += 40; }
+    }
     for (int y = 0; y < WM; y++)
       for (int x = 0; x < WM; x++) {
         int h = height_of(elevation(landform, x, y) + bias);

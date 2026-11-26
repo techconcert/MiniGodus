@@ -17,7 +17,7 @@ CLIMATES = ["temperate", "savanna", "northern", "tropical"]
 GALLERY = [(0, 0, 11), (1, 3, 5), (2, 1, 21), (3, 2, 7), (4, 3, 33), (5, 2, 41)]
 # (landform, climate, seed, days) of the village pictures
 # r4: the town on day 20 of an unaided world (landform, climate, seed)
-TOWNS = [(0, 0, 11), (2, 3, 21), (3, 1, 7)]
+TOWNS = [(0, 0, 11), (2, 3, 21), (3, 1, 7), (5, 2, 41)]
 VILLAGES = [(0, 0, 11, 3), (2, 3, 21, 4), (0, 2, 11, 5), (3, 1, 7, 4)]
 
 

@@ -125,6 +125,10 @@ The top bar: ![](docs/screenshots/topbar-counters.png)
 |---|---|
 | ![](docs/screenshots/town-day20-river-valley-tropical.png) | ![](docs/screenshots/town-day20-lake-basin-savanna.png) |
 
+| Town on day 20, mountain plateau, northern | |
+|---|---|
+| ![](docs/screenshots/town-day20-mountain-plateau-northern.png) | |
+
 **Needs and projects.** He scores food (less than 2 days of food, or too few fields), housing (fewer beds than people),
 water (a home with no water within 8 tiles), health (the first weak villager wants an infirmary; healing comes in r5),
 wood, growth (a new home tier unlocked: a flat 3x3 plot beside the homes first, then the home), faith (no shrine) and
@@ -132,12 +136,15 @@ monument (a hook for r6). A pond has its own need when there is no coast. A worl
 (green robe), herder (sand), fisher (blue), builder (red). It biases the scores and the choice of food building.
 
 **Terraforming.** One layer per cast. A step between two layers costs the number of the higher one, an object (tree,
-rock) costs 1, rock layer 7 is never touched. Faith is paid when the staff comes down and never goes below zero. Near the
+rock) costs 1, rock layer 7 is never touched (rock is only the highest peaks: at most about 4% of the land, 10% on a mountain plateau). Faith is paid when the staff comes down and never goes below zero. Near the
 village neighbouring tiles may differ by one layer only, and walking needs that too, so after a project he cuts ramps
 (a ramp sprite marks them) until there is no cliff left that blocks a path. Buildings stand on one layer between 3 and 5,
 never on the lowest land beside water and never on the keep-clear shore of a fishing hut; the site search takes the
 spot of lowest cost (faith to level and ramp, 2 per tile of walking from the green, reserved-tile penalties) and refuses
-any spot that would cut the village in two or shut another building in.
+any spot that would cut the village in two or shut another building in. Every single cast is checked as well: a step
+that would cut the village in two or shut a building in is left out. Faith (up to 9999) is not hoarded: when more than 40% of a
+reserve is spare he opens wide flat land around the green for the next tiers, towards forests and good soil, and digs a
+second pond for fish (LEVELLING LAND on the band). A building that trees have shut in gets its trees cleared.
 
 | Building | Size | From | Beds / yield |
 |---|---|---|---|
