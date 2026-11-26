@@ -101,7 +101,7 @@ def test_png2tiles():
         committed = open(os.path.join(ROOT, "lib", "gamecore", "src", "assets_gen.h")).read()
         check(outs[0] == committed, "assets_gen.h is stale: run python tools/png2tiles.py")
         check(outs[0].count("GC_WPAL") >= 2 and "GC_QUARTS_CELLS" in outs[0], "world tables are generated")
-        # art budget: r1 carried 37.7 KB; r2 adds at most about 10 KB
+        # art budget: r1 carried 37.7 KB; r2 added about 10 KB; r3 adds the village, villager and tool sheets (about 4 KB)
         size = 0
         for m in re.finditer(r"const (?:uint8_t|uint16_t) (GC_\w+)\[([\d\]\[]+)\]", outs[0]):
             dims = [int(x) for x in re.findall(r"\d+", m.group(2))]
@@ -109,7 +109,7 @@ def test_png2tiles():
             for x in dims:
                 n *= x
             size += n * (2 if "uint16_t" in m.group(0) else 1)
-        check(size < 48 * 1024, f"art tables are {size} bytes, over the budget (40 KB art plus the carried-over sheets)")
+        check(size < 54 * 1024, f"art tables are {size} bytes, over the budget (40 KB art plus the carried-over sheets)")
 
 
 if __name__ == "__main__":

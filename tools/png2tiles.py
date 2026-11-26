@@ -28,6 +28,8 @@ SHEETS = [
     ("items.png", "ITEMS"),
     ("objects.png", "OBJECTS", WORLD_RGB_TO_INDEX),
     ("shaman.png", "SHAMAN"),
+    ("village.png", "VILLAGE", WORLD_RGB_TO_INDEX),
+    ("villagers.png", "VILLAGERS"),
 ]
 
 
@@ -36,6 +38,7 @@ SHEETS = [
 SHEETS8 = [
     ("terrain.png", "QUARTS", ROLE_RGB_TO_INDEX),
     ("hud.png", "ICONS", RGB_TO_INDEX),
+    ("tools.png", "TOOLS", RGB_TO_INDEX),
 ]
 
 

@@ -56,6 +56,7 @@ static void place_shaman(void) {
   s_cam_free = 0;
   s_cam_x = cam_clamp_x(s_sh.x + 8 - CAM_W / 2);
   s_cam_y = cam_clamp_y(s_sh.y + 8 - CAM_H / 2);
+  quarts_view(s_cam_x, s_cam_y);
 }
 
 static void reset_state(int keep_world) {
@@ -155,10 +156,9 @@ void world_weather_changed(void) { g_dirty |= 1u; }
 // ------------------------------------------------------------------- simulation
 static void mark_anim_strips(void) {
   int tx0 = s_cam_x >> 4, tx1 = (s_cam_x + CAM_W - 1) >> 4, ty0 = s_cam_y >> 4, ty1 = (s_cam_y + CAM_H - 1) >> 4;
-  uint32_t cols = 0;
-  for (int x = tx0; x <= tx1 && x < WM; x++) cols |= 1u << x;
   for (int y = ty0; y <= ty1 && y < WM; y++)
-    if ((uint32_t)quarts_anim_rows(y) & cols) mark_rows(y * GC_TILE - s_cam_y + GC_STRIP_H, GC_TILE);
+    for (int x = tx0; x <= tx1 && x < WM; x++)
+      if (quarts_tile_anim(x, y)) { mark_rows(y * GC_TILE - s_cam_y + GC_STRIP_H, GC_TILE); break; }
 }
 
 static void follow_camera(void) {
@@ -174,6 +174,7 @@ static void follow_camera(void) {
   sx = sx > 6 ? 6 : (sx < -6 ? -6 : sx);
   sy = sy > 6 ? 6 : (sy < -6 ? -6 : sy);
   s_cam_x += sx; s_cam_y += sy;
+  if (sx || sy) quarts_view(s_cam_x, s_cam_y);
 }
 
 // at a tile boundary: choose the next tile of the walk
@@ -523,7 +524,7 @@ int32_t world_query(int key) {
     case GQ_Q_START_Y: return g_world.start_y;
     case GQ_Q_START_AREA: {
       int n = world_flood_area(g_world.start_x, g_world.start_y);
-      if (s_walking) world_flow(s_goal_x, s_goal_y);       // the flood reused the shaman's distance field
+      if (s_walking) world_flow(s_goal_x, s_goal_y);       // the flood used the shared distance buffer
       return n;
     }
     case GQ_Q_MAP_HASH: return (int32_t)world_map_hash();
@@ -550,6 +551,7 @@ void world_debug(int cmd, int32_t arg) {
   else if (cmd == GQ_DBG_SET_CAM) {
     s_cam_x = cam_clamp_x((int)(arg & 1023)); s_cam_y = cam_clamp_y((int)((arg >> 10) & 1023));
     s_cam_free = 1;
+    quarts_view(s_cam_x, s_cam_y);
     g_dirty |= MAP_STRIPS;
   }
 }

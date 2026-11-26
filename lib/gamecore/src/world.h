@@ -19,8 +19,8 @@ enum { CL_TEMPERATE, CL_SAVANNA, CL_NORTHERN, CL_TROPICAL, CL_COUNT };
 enum { SOIL_PLAIN, SOIL_FERTILE, SOIL_DRY };
 enum { OB_NONE, OB_TREE, OB_BUSH, OB_ROCK };   // OB_BUSH on a water tile is a shoal of fish
 
-// tile kinds for colours: the height, or 8 for snow cover
-enum { KIND_COUNT = 9, KIND_SNOW = 8 };
+// tile kinds for colours: the height, or 8 + 0/1/2 for snow cover on height <= 4 / 5 / 6 (so that snow layers differ)
+enum { KIND_COUNT = 11, KIND_SNOW = 8 };
 
 extern uint8_t g_map[WM * WM];
 extern uint16_t g_wpal[16];     // world palette of the current climate (RGB565, colour depth applied)
@@ -29,7 +29,8 @@ extern uint8_t  g_wframe;       // water shimmer frame 0/1
 struct WorldInfo { uint8_t landform, climate; uint8_t start_x, start_y; char name[12]; };
 extern WorldInfo g_world;
 
-static inline int map_kind(uint8_t b) { return (b & MT_SNOW) ? KIND_SNOW : MT_H(b); }
+static inline int snow_kind(int h) { return KIND_SNOW + (h >= 6 ? 2 : (h == 5 ? 1 : 0)); }
+static inline int map_kind(uint8_t b) { return (b & MT_SNOW) ? snow_kind(MT_H(b)) : MT_H(b); }
 
 // generator: seed, landform and climate are all fixed by the caller (see world_pick)
 void world_generate(uint32_t seed, int landform, int climate);
@@ -40,10 +41,11 @@ int  world_flood_area(int tx, int ty);             // walkable tiles connected t
 uint32_t world_map_hash(void);
 
 // renderer tables
-void quarts_rebuild(int x0, int y0, int x1, int y1);   // tiles x0..x1, y0..y1 inclusive (clamped); all = 0,0,WM-1,WM-1
+void quarts_view(int cam_x, int cam_y);                // quarter table window around the camera (call when the camera moves)
+void quarts_rebuild(int x0, int y0, int x1, int y1);   // the map changed in these tiles (inclusive)
 void quarts_palette(const uint16_t* pal);              // role lookup tables for the current palette
 void quarts_render(uint16_t* out, int wx0, int wy0, int frame);   // terrain of the 240x16 strip whose top is world (wx0, wy0)
-int  quarts_anim_rows(int ty);                         // bit mask of the tile columns of row ty that shimmer
+int  quarts_tile_anim(int x, int y);                   // 1 if the tile has a shimmering quarter
 void draw_objects(uint16_t* out, int wx0, int wy0);
 
 // flow field to a target tile (distance in steps, 255 = unreachable); used by the shaman
