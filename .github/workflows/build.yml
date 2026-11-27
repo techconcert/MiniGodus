@@ -191,7 +191,7 @@ jobs:
           (cd rel && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
           NOTES="MiniGodus r$REL, build $SHORT (commit ${{ github.sha }}).
 
-          $(cat RELEASE-NOTES.md)
+          $(awk '/^What (is|was) new in MiniGodus r/{n++} n==1' RELEASE-NOTES.md)
 
           Flash SDP_MiniGodus_quest_*.bin (the game) on the clock's update page (http://<clock IP>/update, or http://192.168.4.1/update on the MINIGODUS-XXXX rescue network). SDP_MiniGodus_test_*.bin is the display test build. Check the SHA256 sums in SHA256SUMS.txt. Read docs/RECOVERY.md before installing."
           # A later push of the same release number replaces the release, so the page always holds the newest files.

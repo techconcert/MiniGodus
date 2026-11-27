@@ -20,6 +20,21 @@ def main():
     if int(m.group(1)) != int(version):
         print("FAIL: VERSION is %s but RELEASE-NOTES.md starts with r%s: bump VERSION in the release PR" % (version, m.group(1)))
         return 1
+    # The release body is only the first section (build.yml: awk '/^What (is|was) new in MiniGodus r/{n++} n==1').
+    first, count = [], 0
+    for line in notes.splitlines():
+        if re.match(r"What (is|was) new in MiniGodus r", line):
+            count += 1
+        if count == 1:
+            first.append(line)
+    heads = [l for l in first if re.match(r"What (is|was) new in", l)]
+    if len(heads) != 1 or heads[0] != "What is new in MiniGodus r%s:" % version:
+        print("FAIL: the first release-notes section must be exactly r%s, got %r" % (version, heads))
+        return 1
+    wf = open(os.path.join(ROOT, ".github", "workflows", "build.yml"), encoding="utf-8").read()
+    if "cat RELEASE-NOTES.md" in wf or "n==1' RELEASE-NOTES.md" not in wf:
+        print("FAIL: build.yml must put only the first RELEASE-NOTES.md section in the release body")
+        return 1
     print("test_version: VERSION %s matches RELEASE-NOTES.md" % version)
     return 0
 
