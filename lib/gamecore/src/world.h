@@ -51,6 +51,19 @@ void draw_objects(uint16_t* out, int wx0, int wy0);
 
 // flow field to a target tile (distance in steps, 255 = unreachable); used by the shaman
 extern uint8_t g_dist[WM * WM];
+// r7: ramps. One bit per tile (128 bytes). People cross a step of one layer only over a ramp tile; a bigger step is never crossed.
+enum { RAMP_PRICE = 8 };                              // what a layer step without a ramp costs in the planning flow (a ramp must be cut there)
+extern uint8_t g_ramp[WM * WM / 8];
+int  world_ramp(int x, int y);
+void world_set_ramp(int x, int y, int on);
+int  world_ramp_used(int x, int y);                   // a ramp with a neighbour one layer up or down (the ones that are drawn)
+void world_flow_plan(int tx, int ty);                 // like world_flow, but a layer step without a ramp is allowed at RAMP_PRICE
+void world_flow_run_plan(void);
+void world_flow_reach_to_goal(void);
+void world_audit_step(int x, int y, int nx, int ny);  // test hooks: steps and jumps, see world.cpp
+void world_audit_jump(int dist);                      // somebody was put on another tile, dist tiles away (Manhattan)
+uint32_t world_audit_get(int which);                  // 0 steps, 1 steps over a ramp, 2 bad steps, 3 jumps, 4 jumps of more than 3 tiles
+uint32_t world_flow_count(void);                      // flow fills so far (a statistic for the tests)
 void world_flow(int tx, int ty);
 void world_flow_begin(void);                          // several goals: begin, seed each goal tile, run
 void world_flow_seed(int tx, int ty, int d);
@@ -58,6 +71,7 @@ void world_flow_run(void);
 int  world_step_ok(int x, int y, int nx, int ny);
 void world_set_height(int x, int y, int h);
 int  world_nearest_walkable(int x, int y, int* ox, int* oy);
+int  world_nearest_connected(int x, int y, int gx, int gy, int* ox, int* oy);
 void world_flow_adjacent(int tx, int ty);
 void world_set_built(int tx, int ty, int on);
 void world_clear_object(int tx, int ty);

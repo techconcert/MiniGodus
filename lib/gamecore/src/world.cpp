@@ -5,6 +5,7 @@
 uint8_t   g_map[WM * WM];
 WorldInfo g_world;
 uint8_t   g_dist[WM * WM];
+uint8_t   g_ramp[WM * WM / 8];     // r7: one bit per tile, set where the ground is a ramp (see world.h)
 
 // per tile: four quarter art ids (NW, NE, SW, SE); the kind of the neighbour a quarter blends with follows from its art
 // Quarter art ids of a window of tiles around the camera only (a ring buffer, slot = (ty % WH) * WW + tx % WW).
@@ -196,11 +197,48 @@ static void despeckle(void) {
 
 // ------------------------------------------------------------------------------------------------ walking
 static int walk_ok(uint8_t b) { int h = MT_H(b); return h >= 2 && h <= 6 && MT_OBJ(b) == OB_NONE && MT_SOIL(b) != SOIL_BUILT; }
-// A step between neighbouring tiles is possible if they differ by at most one layer (r4: terraforming cuts cliffs, ramps mend them)
+// r7: a step between neighbouring tiles is possible on the level, and between layers that differ by one only over a ramp tile (one of the
+// two tiles has its ramp bit set: the shaman cuts those where the village needs to get from one layer to the next). A cliff of two
+// layers or more is never a step.
+static inline int ramp_at(int i) { return (g_ramp[i >> 3] >> (i & 7)) & 1; }
+static inline int step_idx(int i, int j) {
+  int d = MT_H(g_map[i]) - MT_H(g_map[j]);
+  return d == 0 || ((d == 1 || d == -1) && (ramp_at(i) || ramp_at(j)));
+}
 int world_step_ok(int x, int y, int nx, int ny) {
-  if (nx < 0 || ny < 0 || nx >= WM || ny >= WM) return 0;
-  int d = MT_H(g_map[TI(x, y)]) - MT_H(g_map[TI(nx, ny)]);
-  return d >= -1 && d <= 1;
+  if (x < 0 || y < 0 || x >= WM || y >= WM || nx < 0 || ny < 0 || nx >= WM || ny >= WM) return 0;
+  return step_idx(TI(x, y), TI(nx, ny));
+}
+// Test hooks (r7): every step anybody takes is reported here; a step over a cliff or onto ground nobody can stand on counts as bad, a jump
+// (somebody put on another tile because the ground went) as a jump. Four counters, 16 bytes.
+static uint32_t s_au_steps, s_au_ramp, s_au_bad, s_au_jumps, s_au_long;
+void world_audit_step(int x, int y, int nx, int ny) {
+  s_au_steps++;
+  if (!world_step_ok(x, y, nx, ny) || !world_walkable(nx, ny)) { s_au_bad++; return; }
+  if (MT_H(g_map[TI(x, y)]) != MT_H(g_map[TI(nx, ny)])) s_au_ramp++;
+}
+void world_audit_jump(int dist) {
+  s_au_jumps++;
+  if (dist > 3) s_au_long++;
+}
+uint32_t world_audit_get(int which) { return which == 0 ? s_au_steps : (which == 1 ? s_au_ramp : (which == 2 ? s_au_bad : (which == 3 ? s_au_jumps : s_au_long))); }
+int world_ramp(int x, int y) { return x >= 0 && y >= 0 && x < WM && y < WM && ramp_at(TI(x, y)); }
+void world_set_ramp(int x, int y, int on) {
+  if (x < 0 || y < 0 || x >= WM || y >= WM) return;
+  int i = TI(x, y);
+  if (on) g_ramp[i >> 3] = (uint8_t)(g_ramp[i >> 3] | (1 << (i & 7))); else g_ramp[i >> 3] = (uint8_t)(g_ramp[i >> 3] & ~(1 << (i & 7)));
+}
+// 1 if the tile is a ramp that is used: a neighbour (that people can stand on) is one layer higher or lower
+int world_ramp_used(int x, int y) {
+  if (!world_ramp(x, y)) return 0;
+  int h = MT_H(g_map[TI(x, y)]);
+  static const int8_t D[4][2] = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}};
+  for (int k = 0; k < 4; k++) {
+    int nx = x + D[k][0], ny = y + D[k][1];
+    if (nx < 0 || ny < 0 || nx >= WM || ny >= WM || !walk_ok(g_map[TI(nx, ny)])) continue;
+    if (iabs(MT_H(g_map[TI(nx, ny)]) - h) == 1) return 1;
+  }
+  return 0;
 }
 // Sets the layer of a tile. Water takes no objects; shallow and lower land lose their snow.
 void world_set_height(int x, int y, int h) {
@@ -209,6 +247,7 @@ void world_set_height(int x, int y, int h) {
   b = (uint8_t)((b & ~7) | (h & 7));
   if (h < 3) b &= (uint8_t)~MT_SNOW;
   g_map[TI(x, y)] = b;
+  if (h < 2 || h > 6) world_set_ramp(x, y, 0);
 }
 int world_walkable(int tx, int ty) { return tx >= 0 && ty >= 0 && tx < WM && ty < WM && walk_ok(g_map[TI(tx, ty)]); }
 
@@ -217,7 +256,9 @@ int world_walkable(int tx, int ty) { return tx >= 0 && ty >= 0 && tx < WM && ty 
 // are then the goal, at distance 0.
 void world_flow_begin(void) { for (int i = 0; i < WM * WM; i++) g_dist[i] = 255; }
 void world_flow_seed(int tx, int ty, int d) { if (tx >= 0 && ty >= 0 && tx < WM && ty < WM && world_walkable(tx, ty)) g_dist[TI(tx, ty)] = (uint8_t)d; }
-void world_flow_run(void) {
+// One relaxation of tile i: the nearest goal over the allowed steps. cross = what a layer step without a ramp costs (0: not allowed at all,
+// that is the real flow; > 0: the planning flow, in which a ramp can be cut there).
+static void relax(int cross) {
   for (int pass = 0; pass < 120; pass++) {
     int changed = 0;
     for (int dir = 0; dir < 2; dir++)
@@ -225,16 +266,29 @@ void world_flow_run(void) {
         int i = dir ? WM * WM - 1 - k : k;
         if (!walk_ok(g_map[i])) continue;
         int x = i % WM, y = i / WM, m = g_dist[i];
-        int h = MT_H(g_map[i]);
-        if (x > 0 && g_dist[i - 1] + 1 < m && iabs(h - MT_H(g_map[i - 1])) <= 1) m = g_dist[i - 1] + 1;
-        if (x < WM - 1 && g_dist[i + 1] + 1 < m && iabs(h - MT_H(g_map[i + 1])) <= 1) m = g_dist[i + 1] + 1;
-        if (y > 0 && g_dist[i - WM] + 1 < m && iabs(h - MT_H(g_map[i - WM])) <= 1) m = g_dist[i - WM] + 1;
-        if (y < WM - 1 && g_dist[i + WM] + 1 < m && iabs(h - MT_H(g_map[i + WM])) <= 1) m = g_dist[i + WM] + 1;
-        if (m < g_dist[i]) { g_dist[i] = (uint8_t)m; changed = 1; }
+        int h = MT_H(g_map[i]), r = ramp_at(i);
+        for (int n = 0; n < 4; n++) {
+          int j;
+          if (n == 0) { if (x == 0) continue; j = i - 1; }
+          else if (n == 1) { if (x == WM - 1) continue; j = i + 1; }
+          else if (n == 2) { if (y == 0) continue; j = i - WM; }
+          else { if (y == WM - 1) continue; j = i + WM; }
+          if (g_dist[j] == 255) continue;
+          int d = h - MT_H(g_map[j]), c;
+          if (d == 0 || ((d == 1 || d == -1) && (r || ramp_at(j)))) c = 1;
+          else if (cross && (d == 1 || d == -1)) c = cross;
+          else continue;
+          if (g_dist[j] + c < m) m = g_dist[j] + c;
+        }
+        if (m < g_dist[i] && m < 255) { g_dist[i] = (uint8_t)m; changed = 1; }
       }
     if (!changed) break;
   }
 }
+void world_flow_run(void) { relax(0); }
+void world_flow_run_plan(void) { relax(RAMP_PRICE); }
+// every tile the real flow reaches becomes a goal at distance 0 of the planning flow (cheapest places for ramps)
+void world_flow_reach_to_goal(void) { for (int i = 0; i < WM * WM; i++) if (g_dist[i] != 255) g_dist[i] = 0; }
 // The walkable tile closest to (x, y) (Manhattan rings); returns 0 if there is none
 int world_nearest_walkable(int x, int y, int* ox, int* oy) {
   for (int r = 0; r < WM; r++)
@@ -245,31 +299,48 @@ int world_nearest_walkable(int x, int y, int* ox, int* oy) {
       }
   return 0;
 }
+// The walkable tile nearest to (x, y) that can be walked to from (gx, gy) (over steps and ramps, not across a cliff); falls back to the
+// nearest walkable tile when nothing connects. Used where the ground is taken from under somebody's feet.
+int world_nearest_connected(int x, int y, int gx, int gy, int* ox, int* oy) {
+  world_flow(gx, gy);
+  for (int r = 0; r < WM; r++)
+    for (int dy = -r; dy <= r; dy++)
+      for (int dx = -r; dx <= r; dx++) {
+        if (iabs(dx) + iabs(dy) != r) continue;
+        int nx = x + dx, ny = y + dy;
+        if (nx >= 0 && ny >= 0 && nx < WM && ny < WM && g_dist[TI(nx, ny)] != 255) { *ox = nx; *oy = ny; return 1; }
+      }
+  return world_nearest_walkable(x, y, ox, oy);
+}
 // Goal: every walkable tile next to (tx, ty) (the tile itself is not a goal)
 void world_flow_adjacent(int tx, int ty) {
   world_flow_begin();
   world_flow_seed(tx - 1, ty, 0); world_flow_seed(tx + 1, ty, 0); world_flow_seed(tx, ty - 1, 0); world_flow_seed(tx, ty + 1, 0);
   world_flow_run();
 }
-void world_flow(int tx, int ty) {
+static int flow_seed_target(int tx, int ty) {
   world_flow_begin();
-  if (tx < 0 || ty < 0 || tx >= WM || ty >= WM) return;
+  if (tx < 0 || ty < 0 || tx >= WM || ty >= WM) return 0;
   if (world_walkable(tx, ty)) world_flow_seed(tx, ty, 0);
   else { world_flow_seed(tx - 1, ty, 0); world_flow_seed(tx + 1, ty, 0); world_flow_seed(tx, ty - 1, 0); world_flow_seed(tx, ty + 1, 0); }
-  world_flow_run();
+  return 1;
 }
+static uint32_t s_flows;
+uint32_t world_flow_count(void) { return s_flows; }
+void world_flow(int tx, int ty) { s_flows++; if (flow_seed_target(tx, ty)) world_flow_run(); }
+void world_flow_plan(int tx, int ty) { s_flows++; if (flow_seed_target(tx, ty)) world_flow_run_plan(); }
 
 // Occupies (on) a tile with a building: no object, nobody walks there.
 void world_set_built(int tx, int ty, int on) {
   if (tx < 0 || ty < 0 || tx >= WM || ty >= WM) return;
   uint8_t& b = g_map[TI(tx, ty)];
-  if (on) b = (uint8_t)((b & 0x0F) | (SOIL_BUILT << 4)); else b = (uint8_t)(b & 0x0F);
+  if (on) { b = (uint8_t)((b & 0x0F) | (SOIL_BUILT << 4)); world_set_ramp(tx, ty, 0); } else b = (uint8_t)(b & 0x0F);
 }
 void world_clear_object(int tx, int ty) { if (tx >= 0 && ty >= 0 && tx < WM && ty < WM) g_map[TI(tx, ty)] &= 0x3F; }
 
 // Walkable tiles connected to (tx, ty). Uses the shared distance buffer g_dist like every other search.
 int world_flood_area(int tx, int ty) {
-  world_flow(tx, ty);
+  world_flow_plan(tx, ty);           // the generator and the tests ask what the land allows: every layer step could get a ramp
   int n = 0;
   for (int i = 0; i < WM * WM; i++) if (g_dist[i] != 255) n++;
   return n;
@@ -363,6 +434,7 @@ void world_generate(uint32_t seed, int landform, int climate) {
   s_rng = hash32(seed ^ 0xa511e9b3U) | 1;
   s_salt = hash32(seed + 77);
   shape_init(landform);
+  for (int i = 0; i < WM * WM / 8; i++) g_ramp[i] = 0;
   // islands and archipelagos are raised until about half of the map is land, with open sea along the border
   int bias = 0, sea_edge = landform == LF_ISLAND || landform == LF_ARCH;
   for (int attempt = 0; attempt < 10; attempt++) {

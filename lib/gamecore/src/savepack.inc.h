@@ -4,7 +4,8 @@
 // a 320-byte flash slot; firmware/store.cpp writes one part per slot and a record is valid only when all six slots are intact).
 //   part 0   header of 64 bytes (godus.cpp) + village_pack_head() (stocks, statistics, monument pace, fish stocks, reserved plots)
 //   part 1   48 villagers x 5 bytes (position, class, sex, weak, birth cooldown, age, needs, sickness), 24 saplings and stumps x 2
-//   part 2   40 buildings x 3 bytes (position, kind, site flag, progress or stage or animals), the last ramps
+//   part 2   40 buildings x 3 bytes (position, kind, site flag, progress or stage or animals), the ramp bits of the map (128 bytes, r7;
+//            an r6 save has the list of the last 10 ramps there: it reads as a few stray ramp bits, which are cleared where no ramp can be)
 //   part 3-5 the map, 5 bits per tile (layer 0..7 and object 0..3): terraforming, felled trees, ponds and fish shoals
 // Not saved because it is re-made at once: roles and what everybody is doing, the shaman's current project, weather snow (from the snow
 // level), puddles, smoke, cloud shadows.
@@ -86,13 +87,13 @@ int village_pack_part(int part, uint8_t* p, int cap) {
     return w.n;
   }
   if (part == 2) {
-    if (cap < MAXB * 3 + 20) return 0;
+    if (cap < MAXB * 3 + WM * WM / 8) return 0;
     for (int b = 0; b < MAXB; b++) {
       if (!bused(b)) { w.u16(0xFFFF); w.u8(0); continue; }
       uint32_t a = (uint32_t)(B[b].x & 31) | ((uint32_t)(B[b].y & 31) << 5) | ((uint32_t)kind_code(btype(b), bvar(b)) << 10) | ((B[b].tp & SITE) ? 1u << 15 : 0);
       w.u16((int)a); w.u8(B[b].st);
     }
-    for (int k = 0; k < 10; k++) w.u16(s_ramp[k]);
+    for (int k = 0; k < WM * WM / 8; k++) w.u8(g_ramp[k]);
     return w.n;
   }
   if (part >= MAP_FIRST && part < MAP_FIRST + 3) {
@@ -140,7 +141,7 @@ void village_unpack_part(int part, const uint8_t* p) {
       B[b].x = (uint8_t)(a & 31); B[b].y = (uint8_t)((a >> 5) & 31);
       B[b].tp = (uint8_t)(tp | (var << 4) | (((a >> 15) & 1) ? SITE : 0)); B[b].st = (uint8_t)st;
     }
-    for (int k = 0; k < 10; k++) { int e = r.u16(); s_ramp[k] = (e == 0xFFFF || (e >> 10)) ? 0xFFFF : (uint16_t)e; }
+    for (int k = 0; k < WM * WM / 8; k++) g_ramp[k] = (uint8_t)r.u8();
   } else if (part >= MAP_FIRST && part < MAP_FIRST + 3) {
     int lo = (part - MAP_FIRST) * MAP_TILES_PER_PART, hi = lo + MAP_TILES_PER_PART > WM * WM ? WM * WM : lo + MAP_TILES_PER_PART;
     int bit = 0;
@@ -161,6 +162,7 @@ void village_unpack_end(void) {
     if (h <= 2) b &= (uint8_t)~MT_SNOW;
     if (MT_SOIL(b) == SOIL_BUILT) b = (uint8_t)(b & 0xCF);
     g_map[i] = b;
+    if (h < 2 || h > 6) world_set_ramp(i % WM, i / WM, 0);
   }
   { uint8_t& b = g_map[cy() * WM + cx()]; if (MT_H(b) < 3 || MT_H(b) > 6) b = (uint8_t)((b & 0x38) | 4); else b &= 0x3F; }
   // buildings: inside the map, on land, not on each other

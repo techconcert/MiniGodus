@@ -10,9 +10,9 @@
 // until no step is left. Everything lives in about 100 bytes; every search uses the shared distance buffer g_dist.
 
 enum { N_FOOD, N_HOUSING, N_WATER, N_HEALTH, N_WOOD, N_GROWTH, N_FAITH, N_MONUMENT, N_POND, N_SHAPE, N_COUNT };
-enum { PK_NONE, PK_BUILD, PK_POND, PK_PLOT, PK_LEVEL, PK_STAGE };
+enum { PK_NONE, PK_BUILD, PK_POND, PK_PLOT, PK_LEVEL, PK_STAGE, PK_ACCESS };     // PK_ACCESS (r7): ramps so that the village can reach a place
 enum { SP_POND = B_COUNT, SP_PLOT = B_COUNT + 1, SP_LEVEL = B_COUNT + 2, SP_STAGE = B_COUNT + 3 };      // search kinds besides the buildings
-enum { WAIT_MAX = 36, MAX_OPS = 100 };
+enum { WAIT_MAX = 36, MAX_OPS = 100, RAMP_COST = 2, AC_BUILDING = 0, AC_SHORE = 1, AC_TREE = 2, AC_TILE = 3 };
 
 struct Proj { uint8_t kind, tp, var, x, y, w, h, hgt, ops, wait; };   // hgt 255: no levelling (fishing hut)
 static Proj     P;
@@ -21,8 +21,7 @@ enum { NFAIL = 12 };
 static uint8_t  s_fail[NFAIL][2], s_failn, s_pneed;
 static uint16_t s_aborts;                                // projects the shaman gave up (a statistic)                   // spots where a project failed
 static uint8_t  s_plot[3][2];                            // reserved flat 3x3 plots (x, 255 = none)
-static uint16_t s_ramp[10];                              // the last ramps he cut (x | y << 5), 0xFFFF = none
-static uint8_t  s_rampn, s_cool[N_COUNT], s_mend_cool;
+static uint8_t  s_cool[N_COUNT], s_mend_cool, s_acc_cool, s_stuck;
 static uint32_t s_spent;
 static uint16_t s_casts, s_ponds, s_plots, s_levels;
 static uint8_t  s_wx, s_wy, s_has_op;
@@ -37,9 +36,8 @@ void shaman_reset(void) {
   for (int i = 0; i < NFAIL; i++) s_fail[i][0] = s_fail[i][1] = 255;
   s_pneed = 0; s_aborts = 0;
   for (int i = 0; i < 3; i++) s_plot[i][0] = s_plot[i][1] = 255;
-  for (int i = 0; i < 10; i++) s_ramp[i] = 0xFFFF;
   for (int i = 0; i < N_COUNT; i++) s_cool[i] = 0;
-  s_rampn = 0; s_spent = 0; s_casts = 0; s_ponds = s_plots = s_levels = 0; s_ld = 0; s_lx = s_ly = 255; s_skipn = 0;
+  s_acc_cool = 0; s_stuck = 0; s_spent = 0; s_casts = 0; s_ponds = s_plots = s_levels = 0; s_ld = 0; s_lx = s_ly = 255; s_skipn = 0;
   for (int i = 0; i < NFAIL; i++) s_skip[i][0] = s_skip[i][1] = 255;
   uint32_t h = G.s.seed * 2654435761u;
   h ^= h >> 15;
@@ -48,8 +46,9 @@ void shaman_reset(void) {
 
 int shaman_pers(void) { return s_pers; }
 int shaman_cast_dir(void) { return s_wd; }
+int shaman_stuck(void) { int v = s_stuck; s_stuck = 0; return v; }
 
-static int count_ramps(void) { int n = 0; for (int i = 0; i < 10; i++) if (s_ramp[i] != 0xFFFF) n++; return n; }
+static int count_ramps(void) { int n = 0; for (int y = 0; y < WM; y++) for (int x = 0; x < WM; x++) if (world_ramp_used(x, y)) n++; return n; }
 
 // ------------------------------------------------------------------ small queries
 static int in_rect(int x, int y, int rx, int ry, int rw, int rh) { return x >= rx && x < rx + rw && y >= ry && y < ry + rh; }
@@ -286,25 +285,47 @@ static int ring_access(int x, int y, int w, int h) {
   return 0;
 }
 
+static int ac_goal(int mode, int x, int y, int rx, int ry, int rw, int rh);
+// bit 0: a shore can be reached on the flow in g_dist, bit 1: a tree can
+static int goals_reached(void) {
+  int r = 0;
+  for (int y = 0; y < WM && r != 3; y++)
+    for (int x = 0; x < WM; x++)
+      if (g_dist[y * WM + x] != 255) { if (ac_goal(AC_SHORE, x, y, 0, 0, 0, 0)) r |= 1; if (ac_goal(AC_TREE, x, y, 0, 0, 0, 0)) r |= 2; }
+  return r;
+}
+
 // Is the village still in one piece with the footprint blocked, and does every building (and the new one) keep a way in?
 // (g_dist must hold the flow from the green.)
 static int keeps_connected(int ax, int ay, int w, int h, int fish) {
-  int base = count_reach(), fr = 0;
-  uint32_t had[2] = {0, 0};
-  uint8_t keep[9];
-  for (int b = 0; b < MAXB; b++) if (bused(b)) { int bw_, bh_; bdims(b, &bw_, &bh_); if (ring_access(B[b].x, B[b].y, bw_, bh_)) had[b >> 5] |= 1u << (b & 31); }
-  for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (g_dist[(ay + j) * WM + ax + i] != 255) fr++;
-  for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { keep[j * 3 + i] = g_map[(ay + j) * WM + ax + i]; world_set_built(ax + i, ay + j, 1); }
   (void)fish;
-  world_flow(cx(), cy());
-  int ok = count_reach() >= base - fr - 2 && ring_access(ax, ay, w, h);
-  for (int b = 0; b < MAXB && ok; b++)
-    if (bused(b) && (had[b >> 5] & (1u << (b & 31)))) {
-      int bw_, bh_;
-      bdims(b, &bw_, &bh_);
-      if (!(ax < B[b].x + bw_ && ax + w > B[b].x && ay < B[b].y + bh_ && ay + h > B[b].y) && !ring_access(B[b].x, B[b].y, bw_, bh_)) ok = 0;
-    }
-  for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) g_map[(ay + j) * WM + ax + i] = keep[j * 3 + i];
+  int base = count_reach(), fr = 0, shx, shy, sh_had, rbase, rfr = 0, rsh_had;
+  uint32_t had[2] = {0, 0};
+  world_shaman_tile(&shx, &shy);
+  sh_had = g_dist[shy * WM + shx] != 255;                                  // g_dist holds the planning flow from the caller
+  for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (g_dist[(ay + j) * WM + ax + i] != 255) fr++;
+  world_flow(cx(), cy());                                                  // what people can walk to today (over the ramps there are)
+  rbase = count_reach();
+  int rgoals = goals_reached();
+  rsh_had = g_dist[shy * WM + shx] != 255;
+  for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (g_dist[(ay + j) * WM + ax + i] != 255) rfr++;
+  for (int b = 0; b < MAXB; b++) if (bused(b)) { int bw_, bh_; bdims(b, &bw_, &bh_); if (ring_access(B[b].x, B[b].y, bw_, bh_)) had[b >> 5] |= 1u << (b & 31); }
+  uint8_t keep[9], keep_r[9];
+  for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { keep[j * 3 + i] = g_map[(ay + j) * WM + ax + i]; keep_r[j * 3 + i] = (uint8_t)world_ramp(ax + i, ay + j); world_set_built(ax + i, ay + j, 1); }
+  world_flow_plan(cx(), cy());
+  int ok = count_reach() >= base - fr - 2 && ring_access(ax, ay, w, h) && (!sh_had || g_dist[shy * WM + shx] != 255);      // the shaman is not walled in
+  if (ok) {                                                                // and nobody who can get somewhere today loses the way
+    world_flow(cx(), cy());
+    ok = count_reach() >= rbase - rfr - 2 && (!rsh_had || g_dist[shy * WM + shx] != 255);
+    if (ok) { int g = goals_reached(); if (count_done(B_WELL)) rgoals &= ~1; if (rgoals & ~g) ok = 0; }          // the shore (without a well) and the trees stay reachable
+    for (int b = 0; b < MAXB && ok; b++)
+      if (bused(b) && (had[b >> 5] & (1u << (b & 31)))) {
+        int bw_, bh_;
+        bdims(b, &bw_, &bh_);
+        if (!(ax < B[b].x + bw_ && ax + w > B[b].x && ay < B[b].y + bh_ && ay + h > B[b].y) && !ring_access(B[b].x, B[b].y, bw_, bh_)) ok = 0;
+      }
+  }
+  for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { g_map[(ay + j) * WM + ax + i] = keep[j * 3 + i]; world_set_ramp(ax + i, ay + j, keep_r[j * 3 + i]); }
   return ok;
 }
 
@@ -312,7 +333,7 @@ static int keeps_connected(int ax, int ay, int w, int h, int fish) {
 static int pick_site(int k, Cand* out, int nolevel) {
   Cand c[NC];
   int n = 0;
-  world_flow(cx(), cy());
+  world_flow_plan(cx(), cy());
   for (int var = 0; var < nvars(k); var++) {
     int w, h;
     kdim(k, var, &w, &h);
@@ -331,7 +352,7 @@ static int pick_site(int k, Cand* out, int nolevel) {
   for (int i = 0; i < n; i++) {
     int w, h;
     kdim(k, c[i].var, &w, &h);
-    world_flow(cx(), cy());
+    world_flow_plan(cx(), cy());
     if (k != SP_LEVEL && !keeps_connected(c[i].x, c[i].y, w, h, k == B_FISH)) continue;
     *out = c[i];
     return 1;
@@ -405,17 +426,24 @@ static int op_breaks(int x, int y, int d) {
   return broke;
 }
 
+static int project_occupied(void) {
+  for (int j = 0; j < P.h; j++) for (int i = 0; i < P.w; i++) if (villager_at(P.x + i, P.y + j)) return 1;
+  return 0;
+}
+
+static int trees_low(void);
 static int next_terra(int sx, int sy, int* tx, int* ty, int* dir) {
-  int bd = 9999;
+  int bd = 9999, last_trees = trees_low();       // the last trees of the forest stay, for the wood
   for (int j = 0; j < P.h; j++)
     for (int i = 0; i < P.w; i++) {
       int x = P.x + i, y = P.y + j;
       uint8_t b = g_map[y * WM + x];
       int t = MT_H(b), d = -2;
       if (skipped(x, y)) continue;
-      if (MT_OBJ(b) && t >= 2) d = 0;
+      if (MT_OBJ(b) && t >= 2) { if (last_trees && MT_OBJ(b) == OB_TREE) continue; d = 0; }
       else if (P.hgt != 255 && t != P.hgt) d = t < P.hgt ? 1 : -1;
       if (d == -2 || !op_reachable(x, y)) continue;
+      if (d < 0 && t <= 3 && villager_at(x, y)) continue;         // r7: not under somebody's feet (the pond would take his ground)
       int dist = iab(x - sx) + iab(y - sy);
       if (dist < bd) { bd = dist; *tx = x; *ty = y; *dir = d; }
     }
@@ -452,9 +480,136 @@ static int next_ramp(int sx, int sy, int* tx, int* ty, int* dir) {
   return bd != 9999;
 }
 
+// ------------------------------------------------------------------ ramps (r7)
+// People cross a step of one layer only over a ramp tile. The village needs one where a place it wants to reach (a building, the shore,
+// a tree) cannot be reached over the ramps that exist: the cheapest set of steps is found with the planning flow (a step without a ramp
+// costs RAMP_PRICE) started from everything the green can reach, and the step nearest to the green is the next ramp to cut.
+static int ac_goal(int mode, int x, int y, int rx, int ry, int rw, int rh) {        // is walkable tile (x, y) a place that serves the goal?
+  if (mode == AC_SHORE) return water_at(x - 1, y) || water_at(x + 1, y) || water_at(x, y - 1) || water_at(x, y + 1);
+  if (mode == AC_TREE) return tree_at(x - 1, y) || tree_at(x + 1, y) || tree_at(x, y - 1) || tree_at(x, y + 1);
+  if (mode == AC_TILE) return x == rx && y == ry;
+  int i = x - rx, j = y - ry;
+  if (i >= 0 && i < rw && j >= 0 && j < rh) return 0;
+  if (i >= -1 && i <= rw && j >= 0 && j < rh) return 1;
+  return j >= -1 && j <= rh && i >= 0 && i < rw;
+}
+static int ramp_tile_ok(int x, int y) { return world_walkable(x, y) && !in_plot(x, y) && !in_proj(x, y); }
+// 1: *rx, *ry is the next tile to turn into a ramp; 0: nothing to do (the goal is reachable, or there is no way at all, or the shaman cannot
+// get to any of the steps: stand = 1 asks that he can stand beside the ramp from where he is)
+static int find_ramp(int mode, int gx, int gy, int gw, int gh, int stand, int* rx, int* ry) {
+  world_flow(cx(), cy());
+  int x, y, bx = -1, by = -1, bd = 255;
+  for (y = 0; y < WM; y++) for (x = 0; x < WM; x++) if (g_dist[y * WM + x] != 255 && ac_goal(mode, x, y, gx, gy, gw, gh)) return 0;      // already reachable
+  world_flow_reach_to_goal();
+  world_flow_run_plan();
+  for (y = 0; y < WM; y++)
+    for (x = 0; x < WM; x++)
+      if (g_dist[y * WM + x] < bd && ac_goal(mode, x, y, gx, gy, gw, gh) && world_walkable(x, y)) { bd = g_dist[y * WM + x]; bx = x; by = y; }
+  if (bx < 0) return 0;
+  static const int8_t D[4][2] = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}};
+  uint8_t cand[8][4];                                                // the steps on the way, the one nearest to the green last: higher tile, lower tile
+  int nc = 0;
+  for (int guard = 0; guard < 300 && g_dist[by * WM + bx] != 0; guard++) {
+    int d = g_dist[by * WM + bx], moved = 0;
+    for (int k = 0; k < 4 && !moved; k++) {
+      int nx = bx + D[k][0], ny = by + D[k][1];
+      if (nx < 0 || ny < 0 || nx >= WM || ny >= WM || !world_walkable(nx, ny)) continue;
+      int dh = hh(bx, by) - hh(nx, ny), c;
+      if (dh == 0 || ((dh == 1 || dh == -1) && (world_ramp(bx, by) || world_ramp(nx, ny)))) c = 1;
+      else if (dh == 1 || dh == -1) c = RAMP_PRICE;
+      else continue;
+      if (g_dist[ny * WM + nx] + c != d) continue;
+      if (c != 1 && nc < 8) {                                         // the higher tile of the pair carries the ramp (it covers the cliff face), else the lower
+        cand[nc][0] = (uint8_t)(dh > 0 ? bx : nx); cand[nc][1] = (uint8_t)(dh > 0 ? by : ny);
+        cand[nc][2] = (uint8_t)(dh > 0 ? nx : bx); cand[nc][3] = (uint8_t)(dh > 0 ? ny : by);
+        nc++;
+      }
+      bx = nx; by = ny; moved = 1;
+    }
+    if (!moved) return 0;
+  }
+  if (!nc) return 0;
+  int sx = -1, sy = -1;
+  if (stand) { world_shaman_tile(&sx, &sy); world_flow(sx, sy); }
+  for (int k = nc - 1; k >= 0; k--)
+    for (int t = 0; t < 2; t++) {
+      int tx = cand[k][t * 2], ty = cand[k][t * 2 + 1];
+      if (!ramp_tile_ok(tx, ty) || (stand && (skipped(tx, ty) || !op_reachable(tx, ty)))) continue;
+      *rx = tx; *ry = ty;
+      return 1;
+    }
+  return 0;
+}
+
+// the next ramp of the project (the shaman must be able to stand beside the tiles he works on, and a building needs a way in)
+static int next_access(int sx, int sy, int* tx, int* ty) {
+  (void)sx; (void)sy;
+  int rx, ry;
+  if (P.kind == PK_ACCESS) { if (!find_ramp(P.var, P.x, P.y, P.w, P.h, 1, &rx, &ry)) return 0; }
+  else if (P.kind == PK_BUILD || P.kind == PK_POND || P.kind == PK_PLOT || P.kind == PK_LEVEL) { if (!find_ramp(AC_BUILDING, P.x, P.y, P.w, P.h, 1, &rx, &ry)) return 0; }      // a place to stand beside every tile of it
+  else return 0;
+  *tx = rx; *ty = ry;
+  return 1;
+}
+
+// Something the village cannot get to over the ramps it has: the shaman himself (shut in on a terrace), a building, the shore (when there
+// is no well), a tree (when wood runs low). Starts a project of ramps for the first of them; 0 when everything is reachable or nothing
+// can be done about it.
+static int access_project(void) {
+  int rx, ry, mode = -1, gx = 0, gy = 0, gw = 1, gh = 1, shore_ok = 0, tree_ok = 0, bad = -1, shx, shy, self_ok;
+  world_shaman_tile(&shx, &shy);
+  world_flow(cx(), cy());                                              // one flow answers all the questions
+  self_ok = g_dist[shy * WM + shx] != 255;
+  for (int b = 0; b < MAXB && bad < 0; b++) {
+    if (!bused(b)) continue;
+    int bw_, bh_;
+    bdims(b, &bw_, &bh_);
+    if (!ring_access(B[b].x, B[b].y, bw_, bh_)) bad = b;
+  }
+  for (int y = 0; y < WM; y++)
+    for (int x = 0; x < WM; x++)
+      if (g_dist[y * WM + x] != 255) { shore_ok |= ac_goal(AC_SHORE, x, y, 0, 0, 0, 0); tree_ok |= ac_goal(AC_TREE, x, y, 0, 0, 0, 0); }
+  if (!self_ok) {
+    if (find_ramp(AC_TILE, shx, shy, 1, 1, 1, &rx, &ry)) { mode = AC_TILE; gx = shx; gy = shy; }
+    else s_stuck = 1;                                                // shut in by buildings and cliffs: no ramp helps, godus.cpp puts him back on the green
+  }
+  if (mode < 0 && bad >= 0) {
+    int bw_, bh_;
+    bdims(bad, &bw_, &bh_);
+    gx = B[bad].x; gy = B[bad].y; gw = bw_; gh = bh_;
+    if (find_ramp(AC_BUILDING, gx, gy, gw, gh, 1, &rx, &ry)) mode = AC_BUILDING;
+  }
+  if (mode < 0 && !shore_ok && !count_done(B_WELL) && pop() >= 2 && find_ramp(AC_SHORE, 0, 0, 0, 0, 1, &rx, &ry)) mode = AC_SHORE;
+  if (mode < 0 && !tree_ok && s_wood < 60 && find_ramp(AC_TREE, 0, 0, 0, 0, 1, &rx, &ry)) mode = AC_TREE;
+  if (mode < 0) return 0;
+  P.kind = PK_ACCESS; P.tp = 0; P.var = (uint8_t)mode; P.x = (uint8_t)gx; P.y = (uint8_t)gy; P.w = (uint8_t)gw; P.h = (uint8_t)gh; P.hgt = 255; P.ops = 0; P.wait = 0;
+  s_has_op = 0; s_ramping = 0;
+  for (int i = 0; i < NFAIL; i++) s_skip[i][0] = s_skip[i][1] = 255;
+  return 1;
+}
+
+// Free of charge (a new village, a loaded game): ramps until every building can be reached and there is a shore and a tree to go to
+static void access_free(void) {
+  for (int guard = 0; guard < 200; guard++) {
+    int rx = 0, ry = 0, found = 0;
+    for (int b = 0; b < MAXB && !found; b++) {
+      if (!bused(b)) continue;
+      int bw_, bh_;
+      bdims(b, &bw_, &bh_);
+      found = find_ramp(AC_BUILDING, B[b].x, B[b].y, bw_, bh_, 0, &rx, &ry);
+    }
+    if (!found && !count_done(B_WELL)) found = find_ramp(AC_SHORE, 0, 0, 0, 0, 0, &rx, &ry);
+    if (!found) found = find_ramp(AC_TREE, 0, 0, 0, 0, 0, &rx, &ry);
+    if (!found) break;
+    world_set_ramp(rx, ry, 1);
+  }
+  quarts_rebuild(0, 0, WM - 1, WM - 1);
+}
+
 static void finish_project(void) {
   Proj p = P;
   P.kind = PK_NONE; s_has_op = 0; s_ramping = 0;
+  if (p.kind == PK_ACCESS) { s_acc_cool = 4; return; }
   if (p.kind == PK_STAGE) return;
   if (p.kind == PK_PLOT) {
     int slot = 0;
@@ -483,8 +638,12 @@ static void finish_project(void) {
       }
   }
   if (ok) {
-    world_flow(cx(), cy());
+    world_flow_plan(cx(), cy());
     ok = keeps_connected(p.x, p.y, w, h, p.tp == B_FISH);
+  }
+  if (ok) {                                   // r7: the ramps are cut by now; a building the village cannot walk to is not laid out
+    world_flow(cx(), cy());
+    ok = ring_access(p.x, p.y, w, h);
   }
   if (ok && lay_site(p.tp, p.var, p.x, p.y, p.tp == B_MONUMENT ? 0 : 1) >= 0) {
     if (p.tp == B_MONUMENT) s_mon_day = (uint16_t)(G.s.day >= MON_GAP_DAYS ? G.s.day - MON_GAP_DAYS : 0);      // the first stage may start at once
@@ -518,32 +677,40 @@ int shaman_target(int sx, int sy, int* tx, int* ty) {
     int x = 0, y = 0, d = 0, found = 0;
     world_flow(sx, sy);                                   // which tiles can he stand beside?
     if (P.ops < MAX_OPS && next_terra(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 0; }
-    else if (P.ops < MAX_OPS + 70 && P.kind != PK_NONE && next_ramp(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 1; }
-    if (!found) { finish_project(); return 0; }
-    if (d != 0 && op_breaks(x, y, d)) { add_skip(x, y); continue; }
-    int cost = d == 0 ? 1 : step_cost(hh(x, y), hh(x, y) + d);
+    else if (P.ops < MAX_OPS + 70 && P.kind != PK_NONE && P.kind != PK_ACCESS && next_ramp(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 1; }
+    else if (P.ops < MAX_OPS + 110 && next_access(sx, sy, &x, &y)) { found = 1; s_ramping = 1; d = 3; }
+    if (!found) {
+      if ((P.kind == PK_BUILD || P.kind == PK_POND) && P.wait < 30 && project_occupied()) { s_waiting = 1; return 0; }      // r7: a building is laid out when nobody stands on the plot
+      finish_project();
+      return 0;
+    }
+    if (d != 0 && d != 3 && op_breaks(x, y, d)) { add_skip(x, y); continue; }
+    int cost = d == 0 ? 1 : (d == 3 ? RAMP_COST : step_cost(hh(x, y), hh(x, y) + d));
     if (s_faith < cost) { s_waiting = 1; return 0; }
     s_wx = (uint8_t)x; s_wy = (uint8_t)y; s_wd = (int8_t)d; s_has_op = 1;
   }
+  finish_project();                                       // every tile left would cut the village: he is done here
   return 0;
 }
 
 void shaman_abort(void) {
   if (P.kind == PK_BUILD) s_wood = (uint16_t)(s_wood + cost_wood(P.tp));
-  if (P.kind != PK_NONE) proj_failed(P.x, P.y);
+  if (P.kind == PK_ACCESS) s_acc_cool = 8;
+  else if (P.kind != PK_NONE) proj_failed(P.x, P.y);
   P.kind = PK_NONE; s_has_op = 0;
 }
 
 static void apply_tile(int x, int y, int d, int free_cost) {
   uint8_t b = g_map[y * WM + x];
-  int t = MT_H(b), cost = d == 0 ? 1 : step_cost(t, t + d);
+  int t = MT_H(b), cost = d == 0 ? 1 : (d == 3 ? RAMP_COST : step_cost(t, t + d));
   if (!free_cost) {
     if (s_faith < cost) return;
     s_faith = (uint16_t)(s_faith - cost);
     s_spent += (uint32_t)cost;
     s_casts++;
   }
-  if (d == 0) {
+  if (d == 3) world_set_ramp(x, y, 1);
+  else if (d == 0) {
     if (MT_OBJ(b) == OB_TREE) s_wood = (uint16_t)(s_wood + 2);
     world_clear_object(x, y);
   } else {
@@ -573,10 +740,7 @@ void shaman_apply(void) {
   }
   apply_tile(s_wx, s_wy, s_wd, 0);
   P.ops++;
-  if (s_ramping && s_wd != 0) {
-    s_lx = s_wx; s_ly = s_wy; s_ld = s_wd;
-    s_ramp[s_rampn % 10] = (uint16_t)(s_wx | (s_wy << 5)); s_rampn++;
-  }
+  if (s_ramping && s_wd != 0 && s_wd != 3) { s_lx = s_wx; s_ly = s_wy; s_ld = s_wd; }
 }
 
 // After a load the land is generated from the seed again: level every footprint and cut ramps at once, free of charge.
@@ -595,6 +759,7 @@ static void heal_terrain(void) {
     if (!next_ramp(cx(), cy(), &x, &y, &d)) break;
     apply_tile(x, y, d, 1);
   }
+  access_free();
 }
 
 // ------------------------------------------------------------------ needs and projects
@@ -602,6 +767,7 @@ static const char* const BNAME[B_COUNT] = {"TENT", "HUT", "COTTAGE", "MANOR", "F
 const char* shaman_label(void) {
   static char buf[28];
   if (P.kind == PK_NONE) return 0;
+  if (P.kind == PK_ACCESS) return "CUTTING RAMPS";
   if (P.kind == PK_POND) return s_ramping ? "CUTTING RAMPS" : "DIGGING POND";
   if (P.kind == PK_PLOT) return s_ramping ? "CUTTING RAMPS" : "FLATTENING PLOT";
   if (P.kind == PK_LEVEL) return s_ramping ? "CUTTING RAMPS" : "LEVELLING LAND";
@@ -719,6 +885,8 @@ static void shaman_plan(void) {
     if (s_waiting && ++P.wait > WAIT_MAX) { shaman_abort(); s_waiting = 0; }
     return;
   }
+  if (s_acc_cool) s_acc_cool--;
+  else if (access_project()) return;
   if (s_mend_cool) s_mend_cool--;
   else if (mend()) return;
   int p = pop();

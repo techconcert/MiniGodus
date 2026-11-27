@@ -44,6 +44,7 @@ void village_debug(int cmd, int32_t arg);
 int  shaman_target(int sx, int sy, int* tx, int* ty);   // 1: cast at tile (tx, ty) next (walk beside it first); 0: nothing to do now
 void shaman_apply(void);                                // the cast is done: pay faith, change the tile
 void shaman_abort(void);                                // he cannot reach the tile: drop the project
+int  shaman_stuck(void);                                // 1 once when he is walled in with no ramp to cut: godus.cpp puts him back on the green
 const char* shaman_label(void);                         // "DIGGING POND" ..., 0 when idle
 int  shaman_pers(void);
 int  shaman_cast_dir(void);                             // +1 raising, -1 lowering, 0 clearing an object
@@ -57,5 +58,6 @@ void weather_flash(void);                                        // a lightning 
 
 // provided by godus.cpp
 void world_cam(int* x, int* y);
+void world_shaman_tile(int* x, int* y);                          // the tile the shaman stands on
 int  world_temp10(void);                                         // tenths of a degree Celsius the rules use (15.0 when there is no reading)
 int  world_has_reading(void);                                    // a live reading or a debug override

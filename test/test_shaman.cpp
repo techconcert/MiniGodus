@@ -112,7 +112,9 @@ static void test_twenty_days() {
   CHECK(grew >= 18);                              // the population grows
   CHECK(total_built >= 20 * 5);
   CHECK(pers.size() == 4);                        // every personality turns up
-  CHECK(bad <= 20 * 2);                           // slopes are mended (a tile pulled both ways is left alone)
+  // r7: a cliff of two layers or more beside the village is a terrace now (people go round it over ramps, test_move checks that nobody crosses one);
+  // the shaman still mends the steps he works near, so the number is only reported
+  (void)bad;
 }
 
 // ------------------------------------------------------------------------------------------------ every building type

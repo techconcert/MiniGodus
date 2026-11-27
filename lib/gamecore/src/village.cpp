@@ -213,6 +213,7 @@ static int key_of(int i) {
   }
 }
 
+static int villager_at(int x, int y) { for (int i = 0; i < MAXV; i++) if (used(i) && V[i].x == x && V[i].y == y) return 1; return 0; }
 static void kill(int i);
 #include "shaman.inc.h"
 #include "nature.inc.h"
@@ -452,7 +453,8 @@ void village_minute(int m, int night) {
   for (int i = 0; i < MAXV; i++)
     if (used(i) && !world_walkable(V[i].x, V[i].y)) {
       int x, y;
-      if (!world_nearest_walkable(V[i].x, V[i].y, &x, &y)) { x = cx(); y = cy(); }
+      if (!world_nearest_connected(V[i].x, V[i].y, cx(), cy(), &x, &y)) { x = cx(); y = cy(); }
+      world_audit_jump((V[i].x > x ? V[i].x - x : x - V[i].x) + (V[i].y > y ? V[i].y - y : y - V[i].y));
       mark_tile(V[i].x, V[i].y); V[i].x = (uint8_t)x; V[i].y = (uint8_t)y; mark_tile(x, y);
       if (is_moving(i)) set_act(i, A_IDLE);
     }
@@ -600,6 +602,7 @@ static void move_group(int key, int steps) {
       }
       if (best < 0) { set_act(i, A_IDLE); break; }
       mark_tile(x, y);
+      world_audit_step(x, y, x + D[best][0], y + D[best][1]);
       V[i].x = (uint8_t)(x + D[best][0]); V[i].y = (uint8_t)(y + D[best][1]);
       V[i].fl = (uint8_t)((V[i].fl & 0x3F) | (best << 6));
       mark_tile(V[i].x, V[i].y);
@@ -637,6 +640,7 @@ void village_tick(uint32_t dt, int night) {
     int dx = nx - mbx, dy = ny - mby;
     if (!world_walkable(nx, ny) || !world_step_ok(V[i].x, V[i].y, nx, ny) || dx * dx + dy * dy > (worship ? 14 : 64)) continue;
     mark_tile(V[i].x, V[i].y);
+    world_audit_step(V[i].x, V[i].y, nx, ny);
     V[i].x = (uint8_t)nx; V[i].y = (uint8_t)ny; V[i].fl = (uint8_t)((V[i].fl & 0x3F) | (dd << 6));
     mark_tile(nx, ny);
   }
@@ -670,12 +674,15 @@ static const uint8_t TUNIC[R_COUNT] = {4, 15, 3, 8, 12, 6, 13, 10, 9, 7};
 static const int8_t TOOL[R_COUNT] = {-1, 0, 1, 2, 3, 4, 5, 6, -1, -1};     // GC_TOOLS cell by role
 
 void village_draw(uint16_t* out, int wx0, int wy0) {
-  // cut ramps
-  for (int k = 0; k < 10; k++) {
-    if (s_ramp[k] == 0xFFFF) continue;
-    int px = (s_ramp[k] & 31) * GC_TILE, py = (s_ramp[k] >> 5) * GC_TILE;
-    if (py + GC_TILE <= wy0 || py >= wy0 + GC_STRIP_H || px + GC_TILE <= wx0 || px >= wx0 + GC_W) continue;
-    blit_sprite(out, wy0, px - wx0, py, GC_VILLAGE(VA_RAMP), 0, 0, g_wpal);
+  // ramps (r7): every ramp tile that joins two layers, a staircase across the way (north-south) or along it (east-west)
+  for (int ty = wy0 >> 4; ty <= (wy0 + GC_STRIP_H - 1) >> 4 && ty < WM; ty++) {
+    if (ty < 0) continue;
+    for (int tx = wx0 >> 4; tx <= (wx0 + GC_W - 1) >> 4 && tx < WM; tx++) {
+      if (tx < 0 || !world_ramp_used(tx, ty)) continue;
+      int h = MT_H(g_map[ty * WM + tx]), ns = 0;
+      if ((ty > 0 && world_walkable(tx, ty - 1) && MT_H(g_map[(ty - 1) * WM + tx]) != h) || (ty < WM - 1 && world_walkable(tx, ty + 1) && MT_H(g_map[(ty + 1) * WM + tx]) != h)) ns = 1;
+      blit_sprite(out, wy0, tx * GC_TILE - wx0, ty * GC_TILE, GC_VILLAGE(VA_RAMP + (ns ? 0 : 1)), 0, 0, g_wpal);
+    }
   }
   draw_forest_ground(out, wx0, wy0);
   // buildings
@@ -882,6 +889,7 @@ void village_reset(int mix) {
   shaman_reset();
   s_vacc = s_anim_acc = 0; s_vanim = 0; s_rr = 0; s_woke = 0; s_last_plan = 255;
   place_start_tent();
+  access_free();                       // r7: ramps to the first tent, a shore and a tree, at no cost
   s_built_tot = 1;
   add_villager(AGE_ADULT, 0, 8, cx(), cy());
   add_villager(AGE_ADULT, 1, 8, cx(), cy());
