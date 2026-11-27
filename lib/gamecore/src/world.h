@@ -70,7 +70,6 @@ void world_flow_seed(int tx, int ty, int d);
 void world_flow_run(void);
 int  world_step_ok(int x, int y, int nx, int ny);
 void world_set_height(int x, int y, int h);
-int  world_nearest_walkable(int x, int y, int* ox, int* oy);
 int  world_nearest_connected(int x, int y, int gx, int gy, int* ox, int* oy);
 void world_flow_adjacent(int tx, int ty);
 void world_set_built(int tx, int ty, int on);

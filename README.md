@@ -314,7 +314,11 @@ The top bar shows two resources, alternating every 3.5 seconds:
 ![](docs/screenshots/topbar-pair-a.png)
 ![](docs/screenshots/topbar-pair-b.png)
 
-Switch Game Mode (the update page, under Firmware update): the buttons GeekQuest and GeekQuestAI make your browser read that game's `latest.json` on its `builds` branch, ask you to confirm (the MiniGodus world does not carry over), download the `.bin` and install it through the usual `/update` upload.
+The worst case, 4 digits of faith, 2 of population and -10 C:
+
+![](docs/screenshots/topbar-worst-case.png)
+
+Switch Game Mode (the update page, under Firmware update): the buttons GeekQuest and GeekQuestAI make your browser read that game's `latest.json` on its `builds` branch and show its version; a second button, Switch to <game> <version>, downloads the `.bin`, checks it and installs it through the usual `/update` upload. Your saved MiniGodus world does not carry over.
 
 ## Hardware
 

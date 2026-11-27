@@ -115,6 +115,7 @@ static void test_twenty_days() {
   // r7: a cliff of two layers or more beside the village is a terrace now (people go round it over ramps, test_move checks that nobody crosses one);
   // the shaman still mends the steps he works near, so the number is only reported
   (void)bad;
+  CHECK(world_audit_get(2) == 0);                 // no recorded step of any villager or the shaman crossed a cliff or entered a tile nobody can stand on
 }
 
 // ------------------------------------------------------------------------------------------------ every building type

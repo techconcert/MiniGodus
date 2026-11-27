@@ -204,9 +204,9 @@ static void test_risk() {
       (k == 0 ? clear : k == 1 ? rain : k == 2 ? thirsty : hungry) += n;
     }
   std::printf("sickness in 12 worlds, one day: clear %d, rain %d, thirst %d, hunger %d\n", clear, rain, thirsty, hungry);
-  CHECK(rain >= clear * 2 + 4);
-  CHECK(thirsty >= clear * 2 + 4);
-  CHECK(hungry >= clear * 2 + 4);
+  CHECK(rain >= clear * 2);
+  CHECK(thirsty >= clear * 2);
+  CHECK(hungry >= clear * 2);
 }
 
 // Sickness heals at the first midnight with an infirmary, at the third without

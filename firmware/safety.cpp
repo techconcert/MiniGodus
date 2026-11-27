@@ -367,15 +367,15 @@ static const char PAGE_UPDATE_FORCE[] PROGMEM = R"HTML(<p><label><input type="ch
 #endif
 static const char PAGE_UPDATE_B[] PROGMEM = R"HTML(<button id="go" disabled>Upload and install</button><p><progress id="p" max="100" value="0" hidden></progress></p>
 <p id="msg"></p></div>
-<div class="box"><h3>Switch game mode</h3><p>Put another game on this clock: GeekQuest or GeekQuestAI. The latest build is fetched by this page from GitHub and installed like a firmware update. <b class="warn">The MiniGodus world will not carry over</b> (same flash area, different format); WiFi and clock settings stay. You can come back by installing a MiniGodus .bin here.</p>
-<p><button id="sq" type="button">GeekQuest</button> <button id="sa" type="button">GeekQuestAI</button> <span id="sw"></span></p></div><p><a href="/">Back</a></p>
+<div class="box"><h3>Switch game mode</h3><p>Install a different game on this clock. Your saved game does not carry over: the other game starts fresh, and the MiniGodus world is lost.</p>
+<p id="gm"></p><p id="gmm"></p></div><p><a href="/">Back</a></p>
 <script>
 const f=document.getElementById('f'),go=document.getElementById('go'),chk=document.getElementById('chk'),cr=document.getElementById('crc'),msg=document.getElementById('msg'),p=document.getElementById('p');
 let free=0,crc='',n=0;fetch('/info').then(r=>r.json()).then(j=>{free=j.free_ota_bytes});
 function crc32(b){let c=-1;for(let i=0;i<b.length;i++){c^=b[i];for(let k=0;k<8;k++)c=(c>>>1)^(0xEDB88320&-(c&1))}return((c^-1)>>>0).toString(16).padStart(8,'0')}
 function has(b){const m=Array.from('GQ-OTA-'+'PAGE-v1',c=>c.charCodeAt(0));o:for(let i=0;i+m.length<=b.length;i++){if(b[i]!==m[0])continue;for(let j=1;j<m.length;j++)if(b[i+j]!==m[j])continue o;return true}return false}
 let sel=null;f.onchange=()=>pick(f.files[0]);
-function pick(x,auto){go.disabled=true;cr.textContent='';sel=x;if(!x)return;
+function pick(x){go.disabled=true;cr.textContent='';sel=x;if(!x)return;
  const rd=new FileReader();rd.onload=()=>{const b=new Uint8Array(rd.result);let e=[],w=[];n=b.length;crc=crc32(b);
   if(b[0]!==0xE9)e.push('not an ESP8266 firmware image (first byte is not 0xE9)');
   else if((b[3]>>4)!==4)e.push('image is not built for 4MB flash');
@@ -383,7 +383,7 @@ function pick(x,auto){go.disabled=true;cr.textContent='';sel=x;if(!x)return;
   if(!has(b)&&x.size!==488304)w.push('this file does not contain the MiniGodus update page; after installing it you could not update from this page again');
   cr.textContent='CRC32 '+crc+', '+x.size+' bytes';
   if(e.length){chk.className='warn';chk.textContent='Cannot install: '+e.join('; ')}
-  else{chk.className=w.length?'warn':'ok';chk.textContent=(w.length?'Warning: '+w.join('; ')+'. ':'Looks good: ')+x.name+', '+x.size+' bytes.';go.disabled=false;if(auto&&!w.length)go.onclick()}};
+  else{chk.className=w.length?'warn':'ok';chk.textContent=(w.length?'Warning: '+w.join('; ')+'. ':'Looks good: ')+x.name+', '+x.size+' bytes.';go.disabled=false}};
  rd.readAsArrayBuffer(x)}
 go.onclick=()=>{const x=sel;if(!x)return;go.disabled=true;f.disabled=true;p.hidden=false;msg.textContent='Uploading... do not unplug the clock.';
  const fc=document.getElementById('force'),fd=new FormData();fd.append('firmware',x,x.name);const q=new XMLHttpRequest();q.open('POST','/update?crc='+crc+'&size='+n+'&force='+(fc&&fc.checked?1:0));
@@ -392,25 +392,32 @@ go.onclick=()=>{const x=sel;if(!x)return;go.disabled=true;f.disabled=true;p.hidd
   else{msg.className='warn';msg.textContent='Update failed: '+q.responseText+'. The current firmware is still installed.';go.disabled=false;f.disabled=false}};
  q.onerror=()=>{msg.className='warn';msg.textContent='Connection lost. If the clock does not come back within a minute, power-cycle it; the previous firmware stays installed unless the upload completed.'};
  q.send(fd)};
-const U='https://raw.githubusercontent.com/techconcert/',up=document.getElementById('up'),ck=document.getElementById('ck'),sw=document.getElementById('sw');
-async function lj(r){const x=await fetch(U+r+'/builds/latest.json?'+Date.now(),{cache:'no-store'});if(!x.ok)throw 0;const j=await x.json();if(!/^firmware\/[\w.-]+\.bin$/.test(j.bin))throw 0;return j}
-async function dl(r,j,o,auto){const n=j.bin.split('/').pop();o.className='';o.textContent='Downloading '+n+'...';
- try{const x=await fetch(U+r+'/builds/'+j.bin);if(!x.ok)throw 0;const a=await x.arrayBuffer();o.textContent='Downloaded '+a.byteLength+' bytes. '+(auto?'Checking it, then installing...':'Check the result above, then press Upload and install.');
-  pick(new File([a],n),auto)}catch(e){o.className='warn';o.textContent='Download failed. Try again or choose the file by hand.'}}
+const R='https://raw.githubusercontent.com/techconcert/MiniGodus/builds/',up=document.getElementById('up'),ck=document.getElementById('ck');
 ck.onclick=async()=>{up.className='';up.textContent='Checking GitHub...';
- try{const j=await lj('MiniGodus'),cur=(await(await fetch('/info')).json()).version;
+ try{const j=await(await fetch(R+'latest.json?'+Date.now(),{cache:'no-store'})).json(),cur=(await(await fetch('/info')).json()).version;
   if(cur.indexOf(j.commit)>=0){up.className='ok';up.textContent='Up to date ('+cur+').';return}
   up.textContent='New version '+j.version+' ('+j.commit+', you have '+cur+'). ';
   const b=document.createElement('button');b.type='button';b.textContent='Download it';up.append(b);
-  b.onclick=()=>{b.disabled=true;dl('MiniGodus',j,up,0)}
+  b.onclick=async()=>{b.disabled=true;up.textContent='Downloading '+j.bin.split('/').pop()+'...';
+   try{const r=await fetch(R+j.bin);if(!r.ok)throw 0;const a=await r.arrayBuffer();up.textContent='Downloaded '+a.byteLength+' bytes. Check the result above, then press Upload and install.';
+    pick(new File([a],j.bin.split('/').pop()))}catch(e){up.className='warn';up.textContent='Download failed. Try again or choose the file by hand.'}}
  }catch(e){up.className='warn';up.textContent='Could not reach GitHub from this browser. Choose the file by hand.'}};
-async function sg(r){sw.className='';sw.textContent='Checking GitHub for '+r+'...';
- try{const j=await lj(r);
-  if(!confirm('Install '+r+' '+j.version+' ('+j.commit+') on this clock?\n\nThe MiniGodus world will NOT carry over: '+r+' keeps its game in the same flash area in a different format, so the saved world is lost (WiFi and clock settings are kept).\n\nTo go back later, use this page again with a MiniGodus .bin.')){sw.textContent='Cancelled.';return}
-  dl(r,j,sw,1)
- }catch(e){sw.className='warn';sw.textContent='Could not get the latest '+r+' build from GitHub in this browser. Choose its .bin by hand above.'}}
-document.getElementById('sq').onclick=()=>sg('GeekQuest');document.getElementById('sa').onclick=()=>sg('GeekQuestAI');
-</script>)HTML";
+</script>
+<script>try{
+const G=[['GeekQuest','techconcert/GeekQuest'],['GeekQuestAI','techconcert/GeekQuestAI']],gm=document.getElementById('gm'),gt=document.getElementById('gmm');
+G.forEach(g=>{const b=document.createElement('button');b.type='button';b.textContent=g[0];gm.append(b,' ');
+ b.onclick=async()=>{gt.className='';gt.textContent='Checking '+g[0]+'...';
+  try{const u='https://raw.githubusercontent.com/'+g[1]+'/builds/',j=await(await fetch(u+'latest.json?'+Date.now(),{cache:'no-store'})).json(),cur=(await(await fetch('/info')).json()).version;
+   if(cur.indexOf(j.commit)>=0){gt.className='ok';gt.textContent=g[0]+' '+j.version+' is already running.';return}
+   gt.textContent=g[0]+' '+j.version+' ('+j.commit+'). Your saved game will not carry over. ';
+   const c=document.createElement('button');c.type='button';c.textContent='Switch to '+g[0]+' '+j.version;gt.append(c);
+   c.onclick=async()=>{c.disabled=true;gt.textContent='Downloading '+g[0]+'...';
+    try{const r=await fetch(u+j.bin);if(!r.ok)throw 0;const a=await r.arrayBuffer();pick(new File([a],j.bin.split('/').pop()));
+     for(let i=0;i<80&&!cr.textContent;i++)await new Promise(r=>setTimeout(r,100));
+     if(go.disabled||chk.className!=='ok')throw 1;gt.textContent='Installing '+g[0]+'... do not unplug the clock.';go.click()}
+    catch(e){gt.className='warn';gt.textContent=e===1?'The file failed the checks above. Nothing was installed.':'Download failed. Nothing was installed.'}}
+  }catch(e){gt.className='warn';gt.textContent='Could not reach GitHub from this browser.'}}});
+}catch(e){}</script>)HTML";
 
 static const char PAGE_WIFI[] PROGMEM = R"HTML(<h2>WiFi setup</h2><div class='box'><form method='post' action='/wifi'>
 Network name<input name='ssid' maxlength='32'>Password<input name='pass' type='password' maxlength='64'>

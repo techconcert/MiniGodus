@@ -11,7 +11,7 @@
 #include "slotlog.h"
 
 static const uint32_t BASE = 0x80000u;
-struct Shared { uint8_t flash[3 * 4096]; uint32_t sig_loaded, sig_new, done, loaded_day, loaded_seed, flash_writes, flash_erases, outside; };
+struct Shared { uint8_t flash[3 * 4096]; uint32_t sig_loaded, sig_new, done, loaded_day, loaded_seed, flash_writes, flash_erases, outside; int32_t res[8]; uint32_t set_same, conf_same, live[4]; };
 static Shared* S;
 static int g_cut = -1, g_crashes = 0;
 static uint32_t g_ms = 100000;
@@ -65,13 +65,54 @@ static uint32_t sig() {
 // What a fork does. BOOT: start the game, begin(), first loop() (loads), report. ADVANCE: boot, then a new world of seed 1000+g runs
 // for a while and the next loop() after 21 minutes saves it (the power may fail inside that save). EDIT: boot, then a settings change
 // is saved (with crashes = 2 the saved game stays quarantined).
-enum { BOOT, ADVANCE, EDIT };
+enum { BOOT, ADVANCE, EDIT, PLAYED, BUTTON, CHECKNEW };
+// the owner's settings and configuration: nothing like the defaults (the fakes of prefs and config hand these out)
+static void owner_prefs() {
+  g_set.brightness = 37; g_set.depth = 61; g_set.flags = GQS_FLAG_NIGHT | GQS_FLAG_MAINT; g_set.card_period = 45;
+  memset(g_set.tz, 0, sizeof(g_set.tz)); strcpy(g_set.tz, "CET-1CEST,M3.5.0,M10.5.0/3");
+  gqs_seal(&g_set);
+  g_conf.flags = GQC_F_WEATHER | GQC_F_FAHRENHEIT | GQC_F_SLEEP; g_conf.seq = 9; g_conf.lat_c = 5252; g_conf.lon_c = 1340;
+  g_conf.sleep_min = 22 * 60 + 15; g_conf.wake_min = 6 * 60 + 40;
+  memset(g_conf.place, 0, sizeof(g_conf.place)); strcpy(g_conf.place, "Berlin");
+  gqc_seal(&g_conf);
+}
+
 static void child(int mode, int g, int cut, int crashes) {
   g_cut = -1; g_crashes = crashes;
   sim_start(5, 9 * 60);
+  if (mode >= PLAYED) owner_prefs();
   store::begin(false);
   g_ms += 2000;
   store::loop();
+  if (mode == PLAYED) {                          // days of play with the owner's settings, then the autosave
+    gc_set_live_weather(GQ_W_RAIN, 123, GC_WXF_FAHRENHEIT);
+    for (int m = 0; m < 3 * 1440; m++) { sim_minutes(1); if (m % 60 == 0) { gc_debug(GQ_DBG_FAITH, 3000); gc_debug(GQ_DBG_FOOD, 500); gc_debug(GQ_DBG_WOOD, 300); } }
+    gc_debug(GQ_DBG_FAITH, 3000); gc_debug(GQ_DBG_FOOD, 500); gc_debug(GQ_DBG_WOOD, 300);
+    S->res[0] = q(0); S->res[1] = q(1); S->res[2] = q(2); S->res[3] = q(3);
+    g_ms += 21u * 60 * 1000;
+    store::loop();
+    S->done = 1; _exit(0);
+  }
+  if (mode == BUTTON) {                          // what POST /config/world does: gc_new_world(0), then store::saveSoon()
+    gc_set_live_weather(GQ_W_RAIN, 123, GC_WXF_FAHRENHEIT);
+    S->res[0] = q(0); S->res[1] = q(1); S->res[2] = q(2); S->res[3] = q(3);     // the loaded game: resources of the played days
+    gc_new_world(0);
+    S->res[4] = q(1); S->res[5] = q(2); S->res[6] = q(3); S->res[7] = q(0);
+    S->live[0] = (uint32_t)gc_query(GQ_Q_LIVE_WX); S->live[1] = (uint32_t)gc_query(GQ_Q_LIVE_TEMP); S->live[2] = (uint32_t)gc_query(GQ_Q_LIVE_FLAGS);
+    store::saveSoon();
+    g_ms += 10000;
+    store::loop();
+    S->done = 1; _exit(0);
+  }
+  if (mode == CHECKNEW) {                        // after a reboot: the saved record holds the new world and the same settings
+    const GqSettings* ss = store::savedSettings();
+    const GqConf* sc = store::savedConf();
+    S->set_same = ss && memcmp(ss, &g_set, sizeof(g_set)) == 0;
+    S->conf_same = sc && memcmp(sc, &g_conf, sizeof(g_conf)) == 0;
+    S->res[0] = q(0); S->res[1] = q(1); S->res[2] = q(2); S->res[3] = q(3); S->res[4] = q(11); S->res[5] = q(12); S->res[6] = q(251);
+    S->loaded_day = (uint32_t)gc_query(GQ_Q_DAY);
+    S->done = 1; _exit(0);
+  }
   S->sig_loaded = sig(); S->loaded_day = (uint32_t)gc_query(GQ_Q_DAY); S->loaded_seed = (uint32_t)gc_query(GQ_Q_SEED);
   if (mode == BOOT) { sim_minutes(3); S->done = 1; _exit(0); }
   if (mode == ADVANCE) {
@@ -249,6 +290,22 @@ int main() {
     CHECK(S->sig_loaded == saved);                                // the game is still the one saved before the crashes
     for (int i = 0; i < 10; i++) CHECK(run(EDIT, 0, -1, 2) == 0);
     CHECK(run(BOOT, 0, -1, 0) == 0 && S->sig_loaded == saved);
+  }
+  // ---- 7. the "Start a new world" button: resources back to a new world, the owner's settings and configuration byte for byte as they were
+  {
+    memset(S->flash, 0xFF, sizeof(S->flash));
+    CHECK(run(BOOT, 0, -1, 0) == 0);
+    CHECK(run(PLAYED, 0, -1, 0) == 0);
+    CHECK(S->res[1] >= 100 && S->res[2] >= 100 && S->res[3] >= 1000 && S->res[0] > 2);
+    CHECK(run(BUTTON, 0, -1, 0) == 0);
+    CHECK(S->res[0] > 2 && S->res[1] >= 100 && S->res[3] >= 1000);                 // the loaded game really had resources
+    CHECK(S->res[4] == 18 && S->res[5] == 12 && S->res[6] == 0 && S->res[7] == 2);  // and the new world has the fresh start
+    CHECK((int)S->live[0] == GQ_W_RAIN && S->live[1] == 123 && S->live[2] == GC_WXF_FAHRENHEIT);      // the live weather is untouched
+    CHECK(run(CHECKNEW, 0, -1, 0) == 0);
+    CHECK(S->set_same == 1 && S->conf_same == 1);                                   // the settings (tz, brightness, flags) and the conf (place, sleep, weather) are as they were
+    CHECK(S->res[0] == 2 && S->res[1] == 18 && S->res[2] == 12 && S->res[3] == 0);  // after the reboot the game is the new world
+    CHECK(S->res[4] == 0 && S->res[5] == 0 && S->res[6] == 0 && S->loaded_day == 0);
+    CHECK(S->outside == 0);
   }
   std::printf("sim_store: all passed\n");
   return 0;

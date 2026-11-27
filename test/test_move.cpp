@@ -217,7 +217,7 @@ int main() {
   CHECK(ramps_cut >= seeds);                         // ramps are cut ...
   CHECK(ramp_steps >= seeds * 5);                    // ... and walked
   CHECK(long_jumps <= 2);                            // nobody is put on a far tile (the shaman, walled in, returns to the green: very rare)
-  CHECK(seen_jumps * 5 <= (long)seeds * days);       // a nudge to the next free tile where the ground went from under his feet: at most 0.2 per world and day
+  CHECK(seen_jumps * 20 <= (long)seeds * days);      // a jump (more than two tiles away, see world_audit_jump: a step aside is a nudge): at most 0.05 per world and day
   CHECK(flows_total <= 8 * minutes_total && worst_flows_min <= 150);      // the paths are cheap: flow fills per game minute
   std::printf("test_move: all passed\n");
   return 0;

@@ -890,6 +890,7 @@ void village_reset(int mix) {
   s_vacc = s_anim_acc = 0; s_vanim = 0; s_rr = 0; s_woke = 0; s_last_plan = 255;
   place_start_tent();
   access_free();                       // r7: ramps to the first tent, a shore and a tree, at no cost
+  start_well();                        // and a well when no ramp can reach the water
   s_built_tot = 1;
   add_villager(AGE_ADULT, 0, 8, cx(), cy());
   add_villager(AGE_ADULT, 1, 8, cx(), cy());

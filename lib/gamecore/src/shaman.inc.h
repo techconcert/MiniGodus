@@ -299,24 +299,26 @@ static int goals_reached(void) {
 // (g_dist must hold the flow from the green.)
 static int keeps_connected(int ax, int ay, int w, int h, int fish) {
   (void)fish;
-  int base = count_reach(), fr = 0, shx, shy, sh_had, rbase, rfr = 0, rsh_had;
+  int base = count_reach(), fr = 0, shx, shy, sh_had, rsh_had;
   uint32_t had[2] = {0, 0};
   world_shaman_tile(&shx, &shy);
   sh_had = g_dist[shy * WM + shx] != 255;                                  // g_dist holds the planning flow from the caller
   for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (g_dist[(ay + j) * WM + ax + i] != 255) fr++;
   world_flow(cx(), cy());                                                  // what people can walk to today (over the ramps there are)
-  rbase = count_reach();
   int rgoals = goals_reached();
   rsh_had = g_dist[shy * WM + shx] != 255;
-  for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) if (g_dist[(ay + j) * WM + ax + i] != 255) rfr++;
+  uint32_t vhad[2] = {0, 0};                                               // the villagers who can walk to the green today keep that way
+  for (int i = 0; i < MAXV; i++) if (used(i) && g_dist[V[i].y * WM + V[i].x] != 255) vhad[i >> 5] |= 1u << (i & 31);
   for (int b = 0; b < MAXB; b++) if (bused(b)) { int bw_, bh_; bdims(b, &bw_, &bh_); if (ring_access(B[b].x, B[b].y, bw_, bh_)) had[b >> 5] |= 1u << (b & 31); }
   uint8_t keep[9], keep_r[9];
   for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { keep[j * 3 + i] = g_map[(ay + j) * WM + ax + i]; keep_r[j * 3 + i] = (uint8_t)world_ramp(ax + i, ay + j); world_set_built(ax + i, ay + j, 1); }
   world_flow_plan(cx(), cy());
-  int ok = count_reach() >= base - fr - 2 && ring_access(ax, ay, w, h) && (!sh_had || g_dist[shy * WM + shx] != 255);      // the shaman is not walled in
+  int sh_in = shx >= ax && shx < ax + w && shy >= ay && shy < ay + h;       // he is not walled in by a plot he stands on (he steps off it)
+  int ok = count_reach() >= base - fr - 2 && ring_access(ax, ay, w, h) && (!sh_had || sh_in || g_dist[shy * WM + shx] != 255);      // the shaman is not walled in
   if (ok) {                                                                // and nobody who can get somewhere today loses the way
     world_flow(cx(), cy());
-    ok = count_reach() >= rbase - rfr - 2 && (!rsh_had || g_dist[shy * WM + shx] != 255);
+    ok = !rsh_had || sh_in || g_dist[shy * WM + shx] != 255;                       // (land that only loses its way holds no building: the shaman re-cuts ramps)
+    for (int i = 0; i < MAXV && ok; i++) if (((vhad[i >> 5] >> (i & 31)) & 1) && g_dist[V[i].y * WM + V[i].x] == 255 && !(V[i].x >= ax && V[i].x < ax + w && V[i].y >= ay && V[i].y < ay + h)) ok = 0;
     if (ok) { int g = goals_reached(); if (count_done(B_WELL)) rgoals &= ~1; if (rgoals & ~g) ok = 0; }          // the shore (without a well) and the trees stay reachable
     for (int b = 0; b < MAXB && ok; b++)
       if (bused(b) && (had[b >> 5] & (1u << (b & 31)))) {
@@ -413,15 +415,22 @@ static int op_reachable(int x, int y) {
 static int op_breaks(int x, int y, int d) {
   if (d == 0) return 0;
   world_flow(cx(), cy());
-  int base = count_reach();
-  uint32_t had[2] = {0, 0};
+  int shx, shy, goals = goals_reached(), sh_had;
+  world_shaman_tile(&shx, &shy);
+  sh_had = g_dist[shy * WM + shx] != 255;
+  uint32_t had[2] = {0, 0}, vhad[2] = {0, 0};                  // what can be reached today must stay reachable: buildings, villagers, the shaman, the shore and the trees
   for (int b = 0; b < MAXB; b++) if (bused(b)) { int bw_, bh_; bdims(b, &bw_, &bh_); if (ring_access(B[b].x, B[b].y, bw_, bh_)) had[b >> 5] |= 1u << (b & 31); }
+  for (int i = 0; i < MAXV; i++) if (used(i) && g_dist[V[i].y * WM + V[i].x] != 255) vhad[i >> 5] |= 1u << (i & 31);
+  if (count_done(B_WELL)) goals &= ~1;
   uint8_t keep = g_map[y * WM + x];
   world_set_height(x, y, MT_H(keep) + d);
   world_flow(cx(), cy());
-  int broke = count_reach() < base - 2;
+  int broke = (goals & ~goals_reached());
+  for (int i = 0; i < MAXV && !broke; i++)
+    if (((vhad[i >> 5] >> (i & 31)) & 1) && g_dist[V[i].y * WM + V[i].x] == 255) broke = 1;
   for (int b = 0; b < MAXB && !broke; b++)
     if (bused(b) && (had[b >> 5] & (1u << (b & 31)))) { int bw_, bh_; bdims(b, &bw_, &bh_); if (!ring_access(B[b].x, B[b].y, bw_, bh_)) broke = 1; }
+  if (!broke && sh_had) { world_flow_plan(cx(), cy()); broke = g_dist[shy * WM + shx] == 255; }      // he can always have a ramp cut for him (the planning flow)
   g_map[y * WM + x] = keep;
   return broke;
 }
@@ -606,6 +615,14 @@ static void access_free(void) {
   quarts_rebuild(0, 0, WM - 1, WM - 1);
 }
 
+// A new village on land from which no shore can be walked to (cliffs of two layers or more all round): a well, finished, beside the green
+static void start_well(void) {
+  Cand c;
+  world_flow(cx(), cy());
+  if (count_done(B_WELL) || (goals_reached() & 1)) return;
+  if (pick_site(B_WELL, &c, 1)) lay_site(B_WELL, c.var, c.x, c.y, 0);
+}
+
 static void finish_project(void) {
   Proj p = P;
   P.kind = PK_NONE; s_has_op = 0; s_ramping = 0;
@@ -680,7 +697,7 @@ int shaman_target(int sx, int sy, int* tx, int* ty) {
     else if (P.ops < MAX_OPS + 70 && P.kind != PK_NONE && P.kind != PK_ACCESS && next_ramp(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 1; }
     else if (P.ops < MAX_OPS + 110 && next_access(sx, sy, &x, &y)) { found = 1; s_ramping = 1; d = 3; }
     if (!found) {
-      if ((P.kind == PK_BUILD || P.kind == PK_POND) && P.wait < 30 && project_occupied()) { s_waiting = 1; return 0; }      // r7: a building is laid out when nobody stands on the plot
+      if ((P.kind == PK_BUILD || P.kind == PK_POND) && P.wait <= WAIT_MAX && project_occupied()) { s_waiting = 1; return 0; }      // r7: a building is laid out when nobody stands on the plot
       finish_project();
       return 0;
     }
@@ -711,7 +728,7 @@ static void apply_tile(int x, int y, int d, int free_cost) {
   }
   if (d == 3) world_set_ramp(x, y, 1);
   else if (d == 0) {
-    if (MT_OBJ(b) == OB_TREE) s_wood = (uint16_t)(s_wood + 2);
+    if (MT_OBJ(b) == OB_TREE) s_wood = (uint16_t)(s_wood > 997 ? 999 : s_wood + 2);
     world_clear_object(x, y);
   } else {
     world_set_height(x, y, t + d);

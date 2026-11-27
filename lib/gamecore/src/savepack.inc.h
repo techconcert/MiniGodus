@@ -5,7 +5,7 @@
 //   part 0   header of 64 bytes (godus.cpp) + village_pack_head() (stocks, statistics, monument pace, fish stocks, reserved plots)
 //   part 1   48 villagers x 5 bytes (position, class, sex, weak, birth cooldown, age, needs, sickness), 24 saplings and stumps x 2
 //   part 2   40 buildings x 3 bytes (position, kind, site flag, progress or stage or animals), the ramp bits of the map (128 bytes, r7;
-//            an r6 save has the list of the last 10 ramps there: it reads as a few stray ramp bits, which are cleared where no ramp can be)
+//            an r6 save has the list of the last 10 ramps there: it reads as stray ramp bits; unpacking clears every ramp that joins no two layers)
 //   part 3-5 the map, 5 bits per tile (layer 0..7 and object 0..3): terraforming, felled trees, ponds and fish shoals
 // Not saved because it is re-made at once: roles and what everybody is doing, the shaman's current project, weather snow (from the snow
 // level), puddles, smoke, cloud shadows.
@@ -186,6 +186,8 @@ void village_unpack_end(void) {
     else if (tp == B_PEN && !(B[b].tp & SITE) && B[b].st > 10) B[b].st = 2;
     else if ((B[b].tp & SITE) && B[b].st >= need_min(tp)) B[b].st = (uint8_t)(need_min(tp) - 1);
   }
+  // ramps: only where two neighbouring layers meet (an r6 save has a list of tile numbers in these bytes, which read as stray bits)
+  for (int i = 0; i < WM * WM; i++) if (world_ramp(i % WM, i / WM) && !world_ramp_used(i % WM, i / WM)) world_set_ramp(i % WM, i / WM, 0);
   // people stand on ground they can walk on
   for (int i = 0; i < MAXV; i++)
     if (used(i) && !world_walkable(V[i].x, V[i].y)) { V[i].x = (uint8_t)cx(); V[i].y = (uint8_t)cy(); }

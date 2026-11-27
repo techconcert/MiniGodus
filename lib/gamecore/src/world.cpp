@@ -217,7 +217,8 @@ void world_audit_step(int x, int y, int nx, int ny) {
   if (!world_step_ok(x, y, nx, ny) || !world_walkable(nx, ny)) { s_au_bad++; return; }
   if (MT_H(g_map[TI(x, y)]) != MT_H(g_map[TI(nx, ny)])) s_au_ramp++;
 }
-void world_audit_jump(int dist) {
+void world_audit_jump(int dist) {                // a step aside of one or two tiles (the ground under somebody turned into a wall) is a nudge, not a jump
+  if (dist <= 2) return;
   s_au_jumps++;
   if (dist > 3) s_au_long++;
 }
@@ -289,18 +290,7 @@ void world_flow_run(void) { relax(0); }
 void world_flow_run_plan(void) { relax(RAMP_PRICE); }
 // every tile the real flow reaches becomes a goal at distance 0 of the planning flow (cheapest places for ramps)
 void world_flow_reach_to_goal(void) { for (int i = 0; i < WM * WM; i++) if (g_dist[i] != 255) g_dist[i] = 0; }
-// The walkable tile closest to (x, y) (Manhattan rings); returns 0 if there is none
-int world_nearest_walkable(int x, int y, int* ox, int* oy) {
-  for (int r = 0; r < WM; r++)
-    for (int dy = -r; dy <= r; dy++)
-      for (int dx = -r; dx <= r; dx++) {
-        if (iabs(dx) + iabs(dy) != r) continue;
-        if (world_walkable(x + dx, y + dy)) { *ox = x + dx; *oy = y + dy; return 1; }
-      }
-  return 0;
-}
-// The walkable tile nearest to (x, y) that can be walked to from (gx, gy) (over steps and ramps, not across a cliff); falls back to the
-// nearest walkable tile when nothing connects. Used where the ground is taken from under somebody's feet.
+// The walkable tile nearest to (x, y) that can be walked to from (gx, gy) (over steps and ramps, not across a cliff); 0 when nothing connects. Used where the ground is taken from under somebody's feet.
 int world_nearest_connected(int x, int y, int gx, int gy, int* ox, int* oy) {
   world_flow(gx, gy);
   for (int r = 0; r < WM; r++)
@@ -310,7 +300,7 @@ int world_nearest_connected(int x, int y, int gx, int gy, int* ox, int* oy) {
         int nx = x + dx, ny = y + dy;
         if (nx >= 0 && ny >= 0 && nx < WM && ny < WM && g_dist[TI(nx, ny)] != 255) { *ox = nx; *oy = ny; return 1; }
       }
-  return world_nearest_walkable(x, y, ox, oy);
+  return 0;                                                 // nothing connected to the goal: the caller decides (no teleport to a tile nobody can leave)
 }
 // Goal: every walkable tile next to (tx, ty) (the tile itself is not a goal)
 void world_flow_adjacent(int tx, int ty) {

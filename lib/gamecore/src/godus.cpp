@@ -317,7 +317,8 @@ void world_tick(uint32_t dt) {
       if (!s_moving) {
         {   // the ground may have been taken from under his feet (a new building, a pond)
           int tx = s_sh.x >> 4, ty = s_sh.y >> 4, ox, oy;
-          if (!world_walkable(tx, ty) && !s_going_to_bed && world_nearest_connected(tx, ty, bed_tx(), bed_ty(), &ox, &oy)) {
+          if (!world_walkable(tx, ty) && !s_going_to_bed) {
+            if (!world_nearest_connected(tx, ty, bed_tx(), bed_ty(), &ox, &oy)) { ox = bed_tx(); oy = bed_ty(); }
             world_audit_jump(((s_sh.x >> 4) > ox ? (s_sh.x >> 4) - ox : ox - (s_sh.x >> 4)) + ((s_sh.y >> 4) > oy ? (s_sh.y >> 4) - oy : oy - (s_sh.y >> 4)));
             s_sh.x = (int16_t)(ox * GC_TILE); s_sh.y = (int16_t)(oy * GC_TILE); s_walking = 0; s_work = 0; g_dirty |= MAP_STRIPS;
           }
@@ -507,7 +508,7 @@ static void draw_top(uint16_t* out, int y0) {
     if (a >= 100) tb[len++] = (char)('0' + a / 100);
     if (a >= 10) tb[len++] = (char)('0' + (a / 10) % 10);
     tb[len++] = (char)('0' + a % 10);
-    if (len < 4) tb[len++] = f ? 'F' : 'C';          // four characters (-10) leave the unit out so that the clock keeps its room
+    if (len < 3) tb[len++] = f ? 'F' : 'C';          // three characters (-10, 100) leave the unit out so that the clock keeps its room
   } else {
     tb[len++] = '-'; tb[len++] = '-';
   }
