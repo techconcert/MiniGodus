@@ -187,7 +187,7 @@ int main() {
     }
     rl_plan(&sc, &pl);
     uint8_t* slot = S->flash + rl_slot_offset((uint32_t)pl.load, (uint32_t)victim);
-    for (int i = 40; i < 300; i += 53) slot[i] &= 0xA5;           // bits that a half written slot would be missing
+    for (int i = 40; i < 300; i += 53) slot[i] ^= 0x24;            // damaged bits (a half written slot)
     CHECK(run(BOOT, 0, -1, 0) == 0);
     CHECK(S->sig_loaded == newest_sig);
     (void)after;
