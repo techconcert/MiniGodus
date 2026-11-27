@@ -88,7 +88,7 @@ typedef struct {
   uint16_t day;              //  32
   uint16_t minute;           //  34
   uint8_t  landform, climate;//  36  current world (same as hist 0)
-  uint8_t  hist_n, pad0;     //  38  1..4 worlds remembered, newest first
+  uint8_t  hist_n, pad0;     //  38  1..4 worlds remembered, newest first; pad0 (r8): robe colour of this world + 1, 0 = from the seed
   uint32_t hist_seed[4];     //  40  the last 4 worlds: seed, landform, climate
   uint8_t  hist_land[4];     //  56
   uint8_t  hist_clim[4];     //  60

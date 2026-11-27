@@ -79,6 +79,10 @@ int village_phase(void) { return s_phase; }
 int village_mon_stage(void) { int b = mon_b(); return b < 0 ? 0 : B[b].st; }
 int village_mon_type(void) { uint32_t h = G.s.seed * 0x9E3779B1u; h ^= h >> 15; h *= 0x85EBCA6Bu; h ^= h >> 13; return (int)((h >> 4) % 5); }
 int village_mon_pos(int* x, int* y) { int b = mon_b(); if (b < 0) return 0; *x = B[b].x; *y = B[b].y; return 1; }
+// r8: the shaman's idle choices draw from their own generator, so that they never change the game's random sequence (the villagers' lives)
+static uint32_t s_ir = 1;
+uint32_t village_idle_rnd(void) { s_ir = s_ir * 1664525u + 1013904223u; return s_ir >> 8; }
+void village_idle_seed(uint32_t seed) { s_ir = seed * 2654435761u + 1; }
 // r8: places the shaman visits when he has nothing to build. kind 0 shrine, 1 monument, 2 a field or orchard, 3 a home. One of the finished ones, picked at random.
 int village_spot(int kind, int* x, int* y) {
   int n = 0, pick = -1;
@@ -86,7 +90,7 @@ int village_spot(int kind, int* x, int* y) {
     if (!bused(b) || (B[b].tp & SITE)) continue;
     int t = btype(b);
     int ok = kind == 0 ? t == B_SHRINE : (kind == 1 ? t == B_MONUMENT : (kind == 2 ? (t == B_FIELD || t == B_ORCHARD) : (t == B_HUT || t == B_COTTAGE || t == B_MANOR || t == B_TENT)));
-    if (ok && (int)(gc_rnd() % (uint32_t)(++n)) == 0) pick = b;
+    if (ok && (int)(village_idle_rnd() % (uint32_t)(++n)) == 0) pick = b;
   }
   if (pick < 0) return 0;
   *x = B[pick].x; *y = B[pick].y;
@@ -471,6 +475,20 @@ void village_minute(int m, int night) {
       mark_tile(V[i].x, V[i].y); V[i].x = (uint8_t)x; V[i].y = (uint8_t)y; mark_tile(x, y);
       if (is_moving(i)) set_act(i, A_IDLE);
     }
+
+  // r8: somebody cut off from the green on a terrace pocket (ground raised or a building put round him): once an hour he is put on the nearest tile
+  // that is connected to the green (a rare jump, counted by the audit), instead of staying there for ever (a water carrier cut off meant thirst for all)
+  if (m % 60 == 0 && pop() > 0) {
+    world_flow(cx(), cy());
+    for (int i = 0; i < MAXV; i++)
+      if (used(i) && g_dist[V[i].y * WM + V[i].x] == 255 && world_walkable(V[i].x, V[i].y)) {
+        int x, y;
+        if (!world_nearest_connected(V[i].x, V[i].y, cx(), cy(), &x, &y)) continue;
+        world_audit_jump((V[i].x > x ? V[i].x - x : x - V[i].x) + (V[i].y > y ? V[i].y - y : y - V[i].y));
+        mark_tile(V[i].x, V[i].y); V[i].x = (uint8_t)x; V[i].y = (uint8_t)y; mark_tile(x, y);
+        if (is_moving(i)) set_act(i, A_IDLE);
+      }
+  }
 
   if (meal_minute(m)) meal(m);
 

@@ -124,7 +124,7 @@ static void test_camera_and_walk() {
     int cx = (int)gc_query(GQ_Q_CAM_X), cy = (int)gc_query(GQ_Q_CAM_Y), moved_frames = 0, maxstep = 0;
     int sx = (int)gc_query(GQ_Q_SHAMAN_X), sy = (int)gc_query(GQ_Q_SHAMAN_Y), walked = 0;
     uint32_t h0 = frame_hash();
-    for (int i = 0; i < 30 * 60; i++) {          // 60 s at 30 fps
+    for (int i = 0; i < 30 * 240; i++) {         // 240 s at 30 fps (r8: he walks to a place and stands there a while)
       gc_clear_dirty();
       gc_tick(33);
       int nx = (int)gc_query(GQ_Q_CAM_X), ny = (int)gc_query(GQ_Q_CAM_Y);

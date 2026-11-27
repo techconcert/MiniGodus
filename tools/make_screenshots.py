@@ -1,6 +1,6 @@
 """Builds tools/shots.cpp with the real game core and writes the README screenshots to docs/screenshots/.
 
-    python tools/make_screenshots.py            # needs g++ and Pillow (add --r6 or --r7 for the pictures of one release only)
+    python tools/make_screenshots.py            # needs g++ and Pillow (add --r6, --r7 or --r8 for the pictures of one release only)
 Each landform gets an overview of the whole 512x512 map (the camera moved over it) and the 240x240 screen of the clock.
 """
 import os
@@ -101,9 +101,43 @@ def r7_shots():
     shot("screen", os.path.join(OUT, "terraced-village.png"), 41, 5, 0, 0, 2, 19 * 1440 + 300, "town")
 
 
+def r8_shots():
+    # r8: the top bar (resources | weather icon + temperature | clock), the worst cases, the band labels and the robe colours.
+    def bar(name, ticks, tokens, boost=400, seed=11):
+        _bar = os.path.join(OUT, "_bar.png")
+        shot("screen", _bar, seed, 0, 0, ticks, 1, 2 * 1440 + 300, "", boost, tokens)
+        Image.open(_bar).crop((0, 0, 240, 16)).resize((720, 48), Image.NEAREST).save(os.path.join(OUT, name))
+        os.remove(_bar)
+    bar("topbar-pair-a.png", 4, "pop=20")
+    bar("topbar-pair-b.png", 1, "pop=20")
+    bar("topbar-worst-case.png", 4, "pop=46,w0,t-100,lead=60,faith=9999", 9999)             # 9999 faith, 48 villagers, -10 C
+    bar("topbar-worst-case-b.png", 1, "pop=46,w0,t-100,lead=60,food=999,wood=999", 9999)    # 999 food, 999 wood, -10 C
+    bar("topbar-999-48-21.png", 4, "pop=46,w0,t210,lead=60,faith=999", 0)                  # 999 faith, 48 villagers, 21 C
+    # the band: what the shaman is doing (mode L runs on until the band reads the label)
+    for name, seed, lab in (("band-praying", 21, "PRAYING"), ("band-resting", 11, "RESTING"), ("band-walking-to-site", 21, "WALKING_TO_SITE"),
+                            ("band-blessing-fields", 11, "BLESSING_FIELDS"), ("band-levelling", 11, "LEVELLING_LAND")):
+        shot("screen", os.path.join(OUT, name + ".png"), seed, -1, -1, 0, 2, 4 * 1440 + 300, "L", 150, "lab=" + lab)
+    # the robe colours: seeds that give six different ones, the shaman in the middle of the picture
+    tiles = []
+    for seed in (1, 25, 7, 8, 3, 11):
+        _r = os.path.join(OUT, "_robe.png")
+        shot("screen", _r, seed, -1, -1, 0, 1, 1)
+        tiles.append(Image.open(_r).crop((84, 72, 156, 144)).resize((216, 216), Image.NEAREST))
+        os.remove(_r)
+    sheet = Image.new("RGB", (216 * 3 + 8, 216 * 2 + 4), (30, 30, 30))
+    for k, t in enumerate(tiles):
+        sheet.paste(t, ((k % 3) * 220, (k // 3) * 220))
+    sheet.save(os.path.join(OUT, "robes.png"))
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     build()
+    if "--r8" in sys.argv:             # only the r8 pictures
+        r8_shots()
+        os.remove(EXE)
+        print("wrote the r8 pictures to", OUT)
+        return
     if "--r7" in sys.argv:             # only the r7 pictures
         r7_shots()
         os.remove(EXE)
@@ -145,6 +179,7 @@ def main():
         shot("screen", os.path.join(OUT, name + ".png"), seed, lf, cl, 0, 2, minutes, mode, boost, tokens)
     r6_shots()
     r7_shots()
+    r8_shots()
     os.remove(EXE)
     print("wrote", OUT)
 

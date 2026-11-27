@@ -12,6 +12,7 @@
 //   shadow  let the cloud shadows drift until one is over the picture
 //   sick  one sick villager from the start of the lead   wood0  the village is always out of wood
 //   F<c>  put the camera over: i infirmary, l lumberjack, c water carrier, b homes, v the village, h the high land, s saplings, m the monument
+// r8: mode L with lab=<label start, _ for a space>: run on until the band reads that, then show it (e.g. lab=PRAYING, lab=WALKING_TO_SITE)
 // r6 tokens: mon=<0..5>  the monument stands at that stage (debug)   phase=<0..4>  force the arc phase (1 worship day, 3 summary, 4 extinct summary)
 //   extinct  everybody dies   settle=<minutes>  run on that long after the debug commands (the villagers walk to the monument)
 // Mode 'i' runs on until a sick villager stands at the finished infirmary, mode 'l' until a lumberjack has felled a tree and a sapling stands.
@@ -32,7 +33,7 @@ static void rgb(uint16_t c, unsigned char* o) {
 
 static int vq(int n) { return (int)gc_query(GQ_Q_VILLAGE + n); }
 
-struct Tok { int w = -1, t = 9999, lead = 240, pop = 0, mon = -1, phase = -1, settle = 0; bool extinct = false; bool flash = false, sick = false, wood0 = false, shadow = false; char focus = 0; };
+struct Tok { int food = -1, wood = -1, faith = -1; char lab[28] = {0}; int w = -1, t = 9999, lead = 240, pop = 0, mon = -1, phase = -1, settle = 0; bool extinct = false; bool flash = false, sick = false, wood0 = false, shadow = false; char focus = 0; };
 static Tok parse(const char* s) {
   Tok k;
   std::string str = s ? s : "";
@@ -46,6 +47,10 @@ static Tok parse(const char* s) {
     else if (t.rfind("mon=", 0) == 0) k.mon = std::atoi(t.c_str() + 4);
     else if (t.rfind("phase=", 0) == 0) k.phase = std::atoi(t.c_str() + 6);
     else if (t.rfind("settle=", 0) == 0) k.settle = std::atoi(t.c_str() + 7);
+    else if (t.rfind("lab=", 0) == 0) { std::strncpy(k.lab, t.c_str() + 4, 27); for (char* q = k.lab; *q; q++) if (*q == '_') *q = ' '; }
+    else if (t.rfind("food=", 0) == 0) k.food = std::atoi(t.c_str() + 5);
+    else if (t.rfind("wood=", 0) == 0) k.wood = std::atoi(t.c_str() + 5);
+    else if (t.rfind("faith=", 0) == 0) k.faith = std::atoi(t.c_str() + 6);
     else if (t == "extinct") k.extinct = true;
     else if (t == "flash") k.flash = true;
     else if (t == "sick") k.sick = true;
@@ -191,6 +196,16 @@ int main(int argc, char** argv) {
       if (mode[0] == 'c') gc_tick(120);
       gc_debug(GQ_DBG_BAND, 5);
     }
+    if (mode[0] == 'L') {                            // r8: run on until the band would read lab=<text> (_ is a space), then show it
+      for (int m = 0; m < 10 * 1440; m++) {
+        if (!std::strncmp(world_state_label(), tk.lab, std::strlen(tk.lab))) break;
+        wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1);
+        for (int i = 0; i < 8 * 4; i++) { gc_tick(125); if (!std::strncmp(world_state_label(), tk.lab, std::strlen(tk.lab))) break; }
+        if (boost && m % 60 == 0) gc_debug(GQ_DBG_FAITH, (int)gc_query(GQ_Q_VILLAGE + 3) + boost);
+      }
+      gc_tick(300);
+      gc_debug(GQ_DBG_BAND, 5);
+    }
     if (tk.mon >= 0) gc_debug(GQ_DBG_MONUMENT, tk.mon);
     if (tk.phase >= 0) gc_debug(GQ_DBG_PHASE, tk.phase);
     if (tk.extinct) gc_debug(GQ_DBG_EXTINCT, 0);
@@ -198,6 +213,9 @@ int main(int argc, char** argv) {
       wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1);
       for (int i = 0; i < 8; i++) gc_tick(500);
     }
+    if (tk.food >= 0) gc_debug(GQ_DBG_FOOD, tk.food);
+    if (tk.wood >= 0) gc_debug(GQ_DBG_WOOD, tk.wood);
+    if (tk.faith >= 0) gc_debug(GQ_DBG_FAITH, tk.faith);
     if (tk.focus) focus(tk.focus);
     if (tk.shadow) {          // let the clouds drift until one is over the middle of the picture
       for (int i = 0; i < 4000; i++) {
