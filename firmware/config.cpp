@@ -62,6 +62,7 @@ static const char M_WAKE[] PROGMEM = "Wake time must look like 07:00. Nothing wa
 static const char M_SAME[] PROGMEM = "Sleep time and wake time must be different. Nothing was changed.";
 static const char M_NOCOORD[] PROGMEM = "Live weather needs a latitude and longitude: search for a place or type them in. Nothing was changed.";
 static const char M_LOWMEM[] PROGMEM = "The clock is low on memory. Try again in a minute.";
+static const char M_FOREIGN[] PROGMEM = "This request came from another site.";
 static const char M_BUSY[] PROGMEM = "A firmware update is running. Try again afterwards.";
 static const char M_STORE[] PROGMEM = "The settings could not be stored in the clock's memory.";
 static const char M_BL[] PROGMEM = "Brightness must be a whole number from 0 to 100. Nothing was changed.";
@@ -98,6 +99,28 @@ static bool admit() {
   if (safety::updating()) { reply(503, M_BUSY); return false; }
   if (ESP.getFreeHeap() < LOW_HEAP_CONFIG) { reply(503, M_LOWMEM); return false; }
   return true;
+}
+
+// CSRF guard for the POST routes: a page on another site can make the browser send a form to the clock. Such a request carries an Origin
+// (or Referer) naming the other site: refuse every POST whose Origin or Referer is present and is not the host the browser asked us for.
+// A request with neither header (curl, scripts) is not a browser form from another site and passes.
+static bool sameHost(const String& url) {
+  int a = url.indexOf("//");
+  a = a < 0 ? 0 : a + 2;
+  int b = url.indexOf('/', a);
+  String h = b < 0 ? url.substring(a) : url.substring(a, b);
+  String me = srv().hostHeader();
+  h.toLowerCase(); me.toLowerCase();
+  return h.length() > 0 && h == me;
+}
+
+static bool admitPost() {
+  ESP8266WebServer& s = srv();
+  if ((s.hasHeader(F("Origin")) && !sameHost(s.header(F("Origin")))) || (s.hasHeader(F("Referer")) && !sameHost(s.header(F("Referer"))))) {
+    reply(403, M_FOREIGN);
+    return false;
+  }
+  return admit();
 }
 
 static void redirectConfig() {
@@ -182,7 +205,7 @@ static bool pct(const String& v, uint8_t* out) {
 
 // ---- POST /config
 static void handleSave() {
-  if (!admit()) return;
+  if (!admitPost()) return;
   ESP8266WebServer& s = srv();
   GqSettings ns = prefs::settings();             // screen part: validated first, applied only after the conf is accepted
   bool screen = false;
@@ -228,7 +251,7 @@ static void handleSave() {
 
 // ---- POST /config/reset: this page's settings only (weather, sleep, screen); the game settings keep their values
 static void handleReset() {
-  if (!admit()) return;
+  if (!admitPost()) return;
   GqConf n;
   gqc_defaults(&n);
   n.seq = (uint16_t)(s_conf.seq + 1);
@@ -241,7 +264,7 @@ static void handleReset() {
 
 // ---- POST /config/night, POST /config/retry
 static void handleNight() {
-  if (!admit()) return;
+  if (!admitPost()) return;
   ESP8266WebServer& s = srv();
   const String& cmd = s.arg("cmd");
   if (cmd == "wake") { nightmode::command(NM_WAKE_NOW); if (s.hasArg("j")) reply(200, M_WAKE_SENT); else redirectConfig(); }
@@ -250,7 +273,7 @@ static void handleNight() {
 }
 
 static void handleRetry() {
-  if (!admit()) return;
+  if (!admitPost()) return;
   safety::wxClearStrikes();
   wxnet::kick();
   if (srv().hasArg("j")) reply(200, M_RETRY); else redirectConfig();
@@ -258,7 +281,7 @@ static void handleRetry() {
 
 // ---- POST /config/world: a new world from a new seed, at once (the page asks first). Only the game is touched.
 static void handleWorld() {
-  if (!admit()) return;
+  if (!admitPost()) return;
   gc_new_world(0);
   store::saveSoon();
   reply(200, PSTR("A new world has started."));
@@ -275,6 +298,8 @@ void begin(bool safeMode) {
   }
   if (safeMode) return;                          // safe mode registers no route
   ESP8266WebServer& s = srv();
+  static const char* kHdr[] = { "Origin", "Referer" };
+  s.collectHeaders(kHdr, 2);                     // the POST routes check them (admitPost)
   s.on("/config", HTTP_GET, handlePage);
   s.on("/config", HTTP_POST, handleSave);
   s.on("/config.json", HTTP_GET, handleJson);

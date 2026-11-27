@@ -20,6 +20,7 @@ enum { GROW_UP_DAYS = 5, HUNGER_WEAK = 4, HUNGER_DEATH = 6 };
 
 void village_reset(int seed_mix);                  // a new world: one couple and a tent
 void village_minute(int minute, int night);        // the clock moved on by one minute (clock valid)
+void village_arc(int minute);                      // phase end checks (the end of the village, of the worship day); also after a clock jump
 void village_new_day(int night);                   // midnight: ageing, births
 void village_tick(uint32_t dt, int night);         // movement, animation
 void village_draw(uint16_t* out, int wx0, int wy0);

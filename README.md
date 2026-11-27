@@ -246,7 +246,8 @@ his levelling of spare land pauses. The type is drawn from the seed: pyramid, st
 walk to the monument at dawn and stay until 20:00, the monument glows and the band reads WORSHIP DAY. After it the **summary** shows the world
 name, days, peak villagers, births, deaths and buildings built. It stays until the next morning's wake time (the clock's sleep schedule still
 darkens the screen at night), then a new world starts. If the village dies out the summary comes within minutes (THE VILLAGE IS GONE) and the new
-world starts the next morning. The summary only ends when the clock knows the time.
+world starts the next morning. The summary ends when your sleep schedule next wakes the clock (the built-in 06:00 without a schedule). Without a
+valid clock it ends after about 12 hours of uptime.
 
 | Worship day | Summary | Extinction | A town on day 35 |
 |---|---|---|---|

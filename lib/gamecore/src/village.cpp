@@ -415,6 +415,16 @@ static void meal(int m) {
 
 static int meal_minute(int m) { return m == MEAL_1 || m == MEAL_2 || m == MEAL_3; }
 
+// The arc: statistics, the end of the village, the end of the worship day. Run every minute, and once after a clock jump that played no
+// minutes (so a jump over the end of the worship day still ends it, and a dying village still counts down).
+void village_arc(int m) {
+  int p = pop();
+  if (p > s_peak) s_peak = (uint8_t)p;
+  if (!p && s_phase <= PH_WORSHIP) { s_phase = PH_DYING; s_beat = 3; }
+  else if (s_phase == PH_DYING && s_beat && --s_beat == 0) s_phase = PH_EXTINCT;
+  if (s_phase == PH_WORSHIP && m >= WORSHIP_END) s_phase = PH_DONE;
+}
+
 void village_minute(int m, int night) {
   int changed = 0;
   if (s_phase >= PH_DONE) return;                              // the world has ended: the summary is on screen, nothing moves any more
@@ -558,14 +568,7 @@ void village_minute(int m, int night) {
       if (vact(i) == A_IDLE && !(V[i].fl & F_WEAK) && (sick(i) || (vrole(i) != R_CHILD && vrole(i) != R_IDLE)) && !s_storm && job_key(i)) set_act(i, A_GO);
     }
   }
-  // the arc: statistics, the end of the village, the end of the worship day
-  {
-    int p = pop();
-    if (p > s_peak) s_peak = (uint8_t)p;
-    if (!p && s_phase <= PH_WORSHIP) { s_phase = PH_DYING; s_beat = 3; }
-    else if (s_phase == PH_DYING && s_beat && --s_beat == 0) s_phase = PH_EXTINCT;
-    if (s_phase == PH_WORSHIP && m >= WORSHIP_END) s_phase = PH_DONE;
-  }
+  village_arc(m);
 }
 
 // ---------------------------------------------------------------- walking

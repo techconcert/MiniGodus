@@ -222,6 +222,20 @@ int main() {
     }
   }
 
+  // ---- 5b. an r5 record with the game quarantined (two crashes): settings save, the r5 game bytes are carried over and load later
+  {
+    uint8_t v4[192];
+    FILE* f = fopen("test/fixtures/save_v4_r5.bin", "rb");
+    CHECK(f && fread(v4, 1, 192, f) == 192);
+    fclose(f);
+    memset(S->flash, 0xFF, sizeof(S->flash));
+    for (uint32_t i = 0; i < 36; i++) { uint8_t junk[192]; memset(junk, (int)i, sizeof(junk)); make_legacy_slot(i, 50 + i, i == 35 ? v4 : junk); }
+    CHECK(run(EDIT, 0, -1, 2) == 0);
+    for (int i = 0; i < 3; i++) CHECK(run(EDIT, 0, -1, 2) == 0);
+    CHECK(run(BOOT, 0, -1, 0) == 0);
+    CHECK(S->loaded_seed == 777 && S->loaded_day == 9);          // the r5 game came through the quarantine
+  }
+
   // ---- 6. after two crashes the saved game is not loaded and not overwritten, but settings still save and the game is carried over
   {
     memset(S->flash, 0xFF, sizeof(S->flash));

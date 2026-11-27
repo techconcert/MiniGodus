@@ -26,6 +26,7 @@ static void run_to(int hh, int mm) { do minute(); while (g_wall != hh * 60 + mm)
 static void start(uint32_t seed) {
   gc_init(GC_SCENE_VILLAGE, seed, 0);
   gc_debug(GQ_DBG_SET_SEED, (int32_t)seed);
+  gc_set_option(GC_OPT_SLEEP_MODE, 0);
   gc_set_live_weather(GQ_W_CLEAR, 180, 0);
   g_wall = 8 * 60 - 1;
   gc_set_clock(7, 59, 1);
@@ -117,6 +118,68 @@ static void test_summary_shown_by_day() {
   std::printf("summary stays until the next wake time ok\n");
 }
 
+// a clock jump (NTP, a wake from sleep) over the end of the worship day still ends it, and a dying village still counts down
+static void test_clock_jump() {
+  start(4243);
+  gc_debug(GQ_DBG_ADD_VILLAGERS, 12);
+  run(60);
+  gc_debug(GQ_DBG_MONUMENT, 5);
+  run_to(0, 5);
+  CHECK(phase() == 1);
+  run_to(15, 0);
+  CHECK(phase() == 1);
+  g_wall = 21 * 60 + 30;                                      // forward by 6.5 h, not over midnight: no minute is played
+  gc_set_clock(21, 30, 1);
+  gc_tick(2000);
+  CHECK(phase() == 3);                                        // the worship day is over, it is not repeated
+  start(9002);
+  gc_debug(GQ_DBG_ADD_VILLAGERS, 8);
+  run(60);
+  gc_debug(GQ_DBG_EXTINCT, 0);
+  g_wall = 14 * 60;                                           // a jump of 4 h without a minute played
+  gc_set_clock(14, 0, 1);
+  gc_tick(2000);
+  g_wall = 18 * 60;
+  gc_set_clock(18, 0, 1);
+  gc_tick(2000);
+  for (int i = 0; i < 4 && phase() != 4; i++) { g_wall += 5; gc_set_clock(g_wall / 60, g_wall % 60, 1); gc_tick(2000); gc_set_clock(g_wall / 60, g_wall % 60, 1); }
+  CHECK(phase() == 4 || phase() == 2);
+  std::printf("clock jump over the end of the worship day ok\n");
+}
+
+// the summary ends when the user's sleep schedule wakes the clock, not at a fixed hour
+static void test_summary_follows_schedule() {
+  start(778);
+  gc_debug(GQ_DBG_ADD_VILLAGERS, 6);
+  run(60);
+  int seed0 = (int)gc_query(GQ_Q_SEED);
+  gc_set_option(GC_OPT_SLEEP_MODE, 1);                        // a schedule is in use and the clock is awake
+  gc_debug(GQ_DBG_PHASE, 3);
+  run_to(2, 0);
+  CHECK(phase() == 3 && (int)gc_query(GQ_Q_SEED) == seed0);   // awake all night: the built-in 06:00 does not end it
+  run_to(8, 0);
+  CHECK(phase() == 3 && (int)gc_query(GQ_Q_SEED) == seed0);   // it has not slept yet
+  run_to(23, 30);
+  gc_set_option(GC_OPT_SLEEP_MODE, 2);                        // the schedule sends the clock to sleep
+  run_to(6, 30);
+  CHECK(phase() == 3 && (int)gc_query(GQ_Q_SEED) == seed0);   // still asleep after 06:00
+  gc_set_option(GC_OPT_SLEEP_MODE, 1);                        // the schedule wakes it at 06:31
+  run(1);
+  CHECK(phase() == 0 && (int)gc_query(GQ_Q_SEED) != seed0);
+  // without a valid clock the summary ends after about 12 hours of uptime
+  start(779);
+  gc_debug(GQ_DBG_ADD_VILLAGERS, 6);
+  run(60);
+  seed0 = (int)gc_query(GQ_Q_SEED);
+  gc_debug(GQ_DBG_PHASE, 3);
+  gc_set_clock(0, 0, 0);
+  for (int i = 0; i < 11 * 3600 * 4; i++) gc_tick(250);       // gc_tick clamps to 250 ms
+  CHECK(phase() == 3 && (int)gc_query(GQ_Q_SEED) == seed0);
+  for (int i = 0; i < 2 * 3600 * 4; i++) gc_tick(250);
+  CHECK(phase() == 0 && (int)gc_query(GQ_Q_SEED) != seed0);
+  std::printf("summary follows the sleep schedule ok\n");
+}
+
 // ---- extinction
 static void test_extinction() {
   start(9001);
@@ -193,6 +256,8 @@ int main() {
   test_monument();
   test_worship_and_summary();
   test_summary_shown_by_day();
+  test_clock_jump();
+  test_summary_follows_schedule();
   test_extinction();
   test_new_world();
   test_animals_and_fish();

@@ -38,7 +38,7 @@ def main(paths):
         elf = check_bin.read_elf_info(os.path.splitext(p)[0] + ".elf")
         ram = elf.ram if elf and elf.ram is not None else None
         diff = "new" if env not in prev else f"{size - prev[env]:+d}"
-        note = "" if size <= check_bin.WARN_SIZE else "above the 485 KB warning level"
+        note = "" if size <= check_bin.WARN_SIZE else f"above the {check_bin.WARN_SIZE // 1024} KB warning level"
         rows.append(f"| {env} | {size} | {diff} | {ram if ram is not None else 'n/a'} | {note} |")
     text = "\n".join(rows) + "\n"
     print(text)

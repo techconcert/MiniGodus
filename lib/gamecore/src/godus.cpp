@@ -27,6 +27,8 @@ static int      s_last_min = -1;
 static uint8_t  s_going_to_bed;
 static int8_t   s_force_l = -1, s_force_c = -1;
 static uint32_t s_next_seed = 0x2545F491u;
+static uint32_t s_sum_ms;                          // time on the summary screen (not saved)
+enum { SUM_NOCLOCK_MS = 12 * 3600 * 1000, SUM_MAX_MS = 36 * 3600 * 1000 };   // no valid clock: 12 h of uptime; a schedule that never sleeps: 36 h
 static uint8_t  s_ph_seen, s_sum_slept;          // the phase the screen was drawn for; the summary has seen the night
 static uint8_t  s_imp;                           // a saved game is being imported part by part
 // the four counters of the top bar, by icon id: faith, food, wood, population (village_stat numbers)
@@ -178,8 +180,9 @@ void world_clock_changed(void) {
       if (mm == 0) world_new_day();
       village_minute(mm, night_at(mm));
     }
-  } else if (d > 2 && d < 720 && s_last_min + d >= 1440) {   // a forward jump over midnight is a new day; a jump back (time zone, NTP) is not
-    world_new_day();
+  } else if (d > 2 && d < 720) {
+    if (s_last_min + d >= 1440) world_new_day();   // a forward jump over midnight is a new day; a jump back (time zone, NTP) is not
+    village_arc(m);                                // the minutes are not played, but the end of the worship day and of a dying village still count
   }
   s_last_min = m;
   G.s.minute = (uint16_t)m;
@@ -252,25 +255,29 @@ static uint32_t fresh_seed(void) {
 
 // The summary is on screen (the monument is finished and the worship day is over, or the village is extinct): it stays until the
 // morning after, when the clock wakes up; the sleep schedule still darkens the screen at night (the firmware does that).
-static void phase_tick(void) {
+static void phase_tick(uint32_t dt) {
   int ph = village_phase();
   if (ph != s_ph_seen) {
     s_ph_seen = (uint8_t)ph;
-    s_sum_slept = 0;
+    s_sum_slept = 0; s_sum_ms = 0;
     g_dirty |= 0x7FFFu;
     if (ph == PH_WORSHIP) { s_band_cur = 5; s_cam_free = 0; }
     gq_touch();
   }
   if (ph >= PH_DONE) {
-    if (want_bed() || is_night()) s_sum_slept = 1;
+    // The summary ends when the clock wakes up next: want_bed() follows the user's sleep schedule (mode 2 = asleep, 1 = schedule in use and
+    // awake) or the built-in night (mode 0, up at GC_NIGHT_END_MIN). Without a valid clock, or if it never sleeps, an uptime limit applies.
+    s_sum_ms += dt;
+    if (want_bed()) s_sum_slept = 1;
     else if (s_sum_slept && g_clock_valid) new_world(fresh_seed(), 0);      // the morning after: a new, very different world
+    else if (s_sum_ms >= (g_clock_valid ? SUM_MAX_MS : SUM_NOCLOCK_MS)) new_world(fresh_seed(), 0);
   }
 }
 
 void world_tick(uint32_t dt) {
   s_play_ms += dt;
   if (s_play_ms >= 60000) { s_play_ms -= 60000; G.s.play_min++; }
-  phase_tick();
+  phase_tick(dt);
 
   // bed time and wake up
   int bed = want_bed();
@@ -558,6 +565,13 @@ static void draw_summary(int s, uint16_t* out) {
         blit_sprite(out, y0, 96 + i * GC_TILE, py, c, 0, 0, g_wpal);
       }
     }
+  }
+  else {                                                     // no monument stands: a cairn of three stones where it would have been
+    const uint16_t gr = g_ui[P_GREY], wh = g_ui[P_WHITE], ol = g_ui[P_OUTLINE];
+    fill_rect(out, y0, 88, 96, 64, 2, gr);
+    fill_rect(out, y0, 104, 82, 32, 14, gr);  fill_rect(out, y0, 104, 82, 32, 1, wh); fill_rect(out, y0, 119, 82, 2, 14, ol);
+    fill_rect(out, y0, 111, 70, 18, 12, wh);  fill_rect(out, y0, 111, 81, 18, 1, ol);
+    fill_rect(out, y0, 116, 60, 8, 10, gr);   fill_rect(out, y0, 116, 69, 8, 1, ol);
   }
   draw_value_row(out, y0, 108, "DAYS", G.s.day + 1);
   draw_value_row(out, y0, 128, "PEAK VILLAGERS", village_stat(253));

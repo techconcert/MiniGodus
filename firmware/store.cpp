@@ -93,6 +93,12 @@ static void loadGame() {
   for (uint32_t k = 0; k < RL_SLOTS_PER_CELL; k++) {
     if (!readSlot((uint32_t)s_boot.load, k)) { if (k) gc_save_import_end(); return; }
     const uint8_t* p = s_slot + RL_HEAD_BYTES + (k == 0 ? GQS_SETTINGS_BYTES + 64 : 0);
+    if (k == 0 && p[4] == GQ_SAVE_VERSION_V4 && p[5] == 0) {      // an r5 game block carried over by a quarantined save (see fillSlot)
+      uint8_t g[GC_SAVE_BYTES];
+      memcpy(g, p, GC_SAVE_PART0);
+      if (readSlot((uint32_t)s_boot.load, 1)) { memcpy(g + GC_SAVE_PART0, s_slot + RL_HEAD_BYTES, GC_SAVE_BYTES - GC_SAVE_PART0); gc_save_import(g, GC_SAVE_BYTES); }
+      return;
+    }
     if (!gc_save_import_part((int)k, p, gc_save_part_size((int)k))) { if (k) gc_save_import_end(); return; }
   }
   gc_save_import_end();
@@ -113,8 +119,22 @@ static void fillSlot(uint32_t k, const GqSettings& st, const GqConf& cf) {
     }
     return;
   }
+  const bool legacy = s_have && s_boot.load_legacy && s_boot.load >= 0;
   const bool old = s_have && !s_boot.load_legacy && s_boot.load >= 0;
-  if (old && readSlot((uint32_t)s_boot.load, k)) {
+  if (legacy && k < 2 && readSlot((uint32_t)s_boot.load, (uint32_t)s_boot.load_slot)) {
+    // The r5 game block (192 bytes, game version 4) is carried over untouched: its first 188 bytes take the place of slot 0's game part,
+    // the last 4 bytes start slot 1. loadGame() recognises it by its version.
+    if (k == 0) {
+      memmove(s_slot + OFF_GAME0, s_slot + OFF_ONE_GAME, GC_SAVE_PART0);
+      memset(s_slot, RL_ERASED, RL_HEAD_BYTES);
+    } else {
+      uint8_t tail[GC_SAVE_BYTES - GC_SAVE_PART0];
+      memcpy(tail, s_slot + OFF_ONE_GAME + GC_SAVE_PART0, sizeof(tail));
+      memset(s_slot, RL_ERASED, RL_HEAD_BYTES);
+      memset(pay, 0, RL_PART_BYTES);
+      memcpy(pay, tail, sizeof(tail));
+    }
+  } else if (old && readSlot((uint32_t)s_boot.load, k)) {
     memset(s_slot, RL_ERASED, RL_HEAD_BYTES);                   // the payload is already in place
   } else {
     memset(pay, 0, RL_PART_BYTES);

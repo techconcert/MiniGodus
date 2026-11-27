@@ -290,8 +290,14 @@ static void fish_day(void) {
   for (int k = 0; k < s_fishn; k++) {
     int low = s_fish_a[k];
     if (MT_H(g_map[low]) > 1) { s_fish_a[k] = 0xFFFF; continue; }                // the water was filled in
-    int cap = fish_cap(water_body(low % WM, low / WM, &low)), v = s_fish_s[k] + cap / 10 + 1;
+    int nlow = low, cap = fish_cap(water_body(low % WM, low / WM, &nlow)), v = s_fish_s[k] + cap / 10 + 1;
     s_fish_s[k] = (uint8_t)(v > cap ? cap : v);
+    if (nlow != low) {      // the body's lowest tile changed (land raised or lowered): re-key the stock, or merge it into a stock the body already has
+      int dup = -1;
+      for (int j = 0; j < s_fishn; j++) if (j != k && s_fish_a[j] == nlow) dup = j;
+      if (dup < 0) s_fish_a[k] = (uint16_t)nlow;
+      else { if (s_fish_s[dup] > s_fish_s[k]) s_fish_s[dup] = s_fish_s[k]; s_fish_a[k] = 0xFFFF; }
+    }
   }
   int n = 0;
   for (int k = 0; k < s_fishn; k++) if (s_fish_a[k] != 0xFFFF) { s_fish_a[n] = s_fish_a[k]; s_fish_s[n] = s_fish_s[k]; n++; }
