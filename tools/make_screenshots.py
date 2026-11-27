@@ -15,10 +15,8 @@ LANDFORMS = ["island", "coast", "river-valley", "lake-basin", "archipelago", "mo
 CLIMATES = ["temperate", "savanna", "northern", "tropical"]
 # (landform, climate, seed) of the README gallery: every landform once, every climate at least once
 GALLERY = [(0, 0, 11), (1, 3, 5), (2, 1, 21), (3, 2, 7), (4, 3, 33), (5, 2, 41)]
-# (landform, climate, seed, days) of the village pictures
 # r4: the town on day 20 of an unaided world (landform, climate, seed)
 TOWNS = [(0, 0, 11), (2, 3, 21), (3, 1, 7), (5, 2, 41)]
-VILLAGES = [(0, 0, 11, 3), (2, 3, 21, 4), (0, 2, 11, 5), (3, 1, 7, 4)]
 
 
 # r5: (name, seed, landform, climate, minutes, mode, boost, tokens)
@@ -154,21 +152,6 @@ def main():
         shot("screen", os.path.join(OUT, f"screen-{name}.png"), seed, lf, cl, 6, 2)
     for cl in range(4):
         shot("screen", os.path.join(OUT, f"climate-{CLIMATES[cl]}.png"), 11, 0, cl, 6, 2)
-    # r3: the village after a few days of play, at 11:00 (the clock is fed minute by minute from 06:00)
-    for lf, cl, seed, days in VILLAGES:
-        shot("screen", os.path.join(OUT, f"village-{LANDFORMS[lf]}-{CLIMATES[cl]}.png"), seed, lf, cl, 0, 2, days * 1440 + 300)
-    # the land shapes of r3 (the "before" pictures are kept from r2) and the four top bar counters
-    for lf, cl, seed, name in ((0, 2, 11, "island-northern"), (0, 0, 12, "island-temperate"), (4, 3, 33, "archipelago-tropical")):
-        shot("map", os.path.join(OUT, f"shape-after-{name}.png"), seed, lf, cl)
-    bars = []
-    for k in range(4):
-        shot("screen", os.path.join(OUT, "_bar.png"), 11, 0, 0, 3 * k + 1, 1, 2 * 1440 + 300)
-        bars.append(Image.open(os.path.join(OUT, "_bar.png")).crop((0, 0, 240, 16)))
-    os.remove(os.path.join(OUT, "_bar.png"))
-    sheet = Image.new("RGB", (240, 16 * 4 + 6), (60, 60, 60))
-    for k, b in enumerate(bars):
-        sheet.paste(b, (0, k * 18))
-    sheet.resize((sheet.width * 3, sheet.height * 3), Image.NEAREST).save(os.path.join(OUT, "topbar-counters.png"))
     # r4: the shaman terraforming (band: his project), a pond dug on a world without a coast, and the town on day 20
     shot("screen", os.path.join(OUT, "shaman-terraforming.png"), 1, 0, 0, 0, 2, 1, "cast", 200)
     shot("screen", os.path.join(OUT, "pond.png"), 1, 5, 0, 0, 2, 1, "pond", 200)

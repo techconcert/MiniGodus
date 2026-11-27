@@ -37,9 +37,15 @@ temperature, and the clock at the right edge with a gap of two character widths 
 when 4-digit faith, 48 villagers and a three-character temperature leave no more room). The bottom band rotates through the status lines, the
 day and the world's name, and always says what the shaman is doing.
 
-| Normal | Pair 2 | Worst case: 9999 faith, 48 villagers, -10 C |
-|---|---|---|
-| ![](docs/screenshots/topbar-pair-a.png) | ![](docs/screenshots/topbar-pair-b.png) | ![](docs/screenshots/topbar-worst-case.png) |
+| Faith and population | Food and wood |
+|---|---|
+| ![](docs/screenshots/topbar-pair-a.png) | ![](docs/screenshots/topbar-pair-b.png) |
+
+The worst cases (the gap shrinks to what is free): 9999 faith, 48 villagers and -10 C; 999 food and 999 wood and -10 C; 999 faith, 48 villagers and 21 C.
+
+![](docs/screenshots/topbar-worst-case.png)
+![](docs/screenshots/topbar-worst-case-b.png)
+![](docs/screenshots/topbar-999-48-21.png)
 
 ## The world
 
@@ -79,6 +85,10 @@ The four climates on the same island:
 Terrain is drawn from 8x8 quarters that look at their own tile and the three that touch their corner, which gives rounded coasts and cliff
 corners from about 70 pieces of art; a step up shows a cliff face on its south side. Heights come from fractal noise with a domain warp, so coasts and
 cliffs are irregular. People and the shaman only move between equal layers or across **ramps** (a stair tile), never over a cliff.
+
+| Villagers on a ramp (snow) | The shaman cutting a ramp |
+|---|---|
+| ![](docs/screenshots/ramp-villagers.png) | ![](docs/screenshots/ramp-shaman.png) |
 
 ![A terraced village, routing around cliffs by its ramps](docs/screenshots/terraced-village.png)
 
@@ -135,7 +145,9 @@ spots the village could not walk to, or that would cut it in two, are refused, a
 **Terraforming.** One layer per cast; a step costs the number of the higher layer, an object costs 1, rock (layer 7) is never touched. Faith is paid when the staff
 comes down and never goes below zero. Near the village neighbouring tiles differ by at most one layer, and after every project he cuts ramps until no cliff blocks a path.
 
-![The shaman digging a pond](docs/screenshots/shaman-terraforming.png)
+| Terraforming | A pond dug on a world without a coast |
+|---|---|
+| ![](docs/screenshots/shaman-terraforming.png) | ![](docs/screenshots/pond.png) |
 
 **He is always doing something visible, and the band says what.** When there is nothing to build he walks to a place with a meaning and stands there, praying or resting with a
 raised staff and a small glow, then moves on: the shrine and the monument plot (PRAYING), the fields (BLESSING FIELDS), a home (VISITING VILLAGERS) and the green (RESTING),
@@ -210,7 +222,7 @@ The **Clock settings** page also has a **Start a new world** button.
 
 ## Memory and cost
 
-The game core uses about 46.6 KB of static RAM (the 1 KB distance buffer shared by every search, the 1 KB map, villagers, buildings, weather, the shaman's 100 bytes), no heap, no libc, no floating
+The game core and firmware use about 46.5 KB of static RAM (46152 bytes in r7, about 0.4 KB more in r8; CI prints the exact figure) (the 1 KB distance buffer shared by every search, the 1 KB map, villagers, buildings, weather, the shaman's 100 bytes), no heap, no libc, no floating
 point. The whole game is saved to flash (1688 bytes in 6 parts, every villager, building, the map with felled trees and saplings, the monument and the statistics). The firmware size is
 reported by CI with every build (the cap is 470 KB for the game; the stock updater needs the image under 500 KB).
 
