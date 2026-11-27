@@ -14,6 +14,7 @@
 #include "nightmode.h"
 #include "cfgstore.h"
 #include "store.h"
+#include "gamecore.h"
 #include "prefs.h"
 #include "config_page_gz.h"
 
@@ -255,6 +256,14 @@ static void handleRetry() {
   if (srv().hasArg("j")) reply(200, M_RETRY); else redirectConfig();
 }
 
+// ---- POST /config/world: a new world from a new seed, at once (the page asks first). Only the game is touched.
+static void handleWorld() {
+  if (!admit()) return;
+  gc_new_world(0);
+  store::saveSoon();
+  reply(200, PSTR("A new world has started."));
+}
+
 // ---- public
 void begin(bool safeMode) {
   if (cfg_load(&s_rtc, &s_conf)) s_default = false;
@@ -272,6 +281,7 @@ void begin(bool safeMode) {
   s.on("/config/reset", HTTP_POST, handleReset);
   s.on("/config/night", HTTP_POST, handleNight);
   s.on("/config/retry", HTTP_POST, handleRetry);
+  s.on("/config/world", HTTP_POST, handleWorld);
 }
 
 void loop() {}

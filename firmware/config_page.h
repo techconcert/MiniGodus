@@ -35,6 +35,7 @@ small a{background:none;color:#e89a3c;padding:0}h3{margin:0}[hidden]{display:non
 <label class="c"><input type="checkbox" name="mt" value="1" id="mt"> Weekly maintenance restart (about 04:00)</label>
 <p><small>Display test, only if colours look wrong (not saved):</small></p>
 <p><button type="button" data-g="/display?madctl=0">RGB order</button> <button type="button" data-g="/display?madctl=8">BGR order</button> <button type="button" data-g="/display?inv=1">Inversion on</button> <button type="button" data-g="/display?inv=0">Inversion off</button></p></div>
+<div class="box"><h3>World</h3><p><small>The game builds one world after another. This ends the current one at once, nobody is saved, and a new world from a new seed starts.</small></p><p><button type="button" id="nw">Start a new world</button></p><p id="nw2" role="status"></p></div>
 <div class="box"><small id="stor"></small></div>
 <p><button>Save settings</button> <button type="button" id="rs">Reset these settings</button> <a href="/">Back</a></p><div id="msg" role="status"></div></form>
 <script>
@@ -84,6 +85,7 @@ async function post(u,p,e){p.set('j','1');say('Working...',1,e);
 f.onsubmit=e=>{e.preventDefault();post('/config',new URLSearchParams(new FormData(f)))};
 document.querySelectorAll('[data-g]').forEach(b=>b.onclick=async()=>{try{await fetch(b.dataset.g);say('Display test sent (not saved).',1)}catch(e){say('The clock did not answer.',0)}});
 $('rs').onclick=()=>{if(confirm('Put the weather, location, time zone, sleep and screen settings on this page back to defaults? The game settings on the main page are not touched.'))post('/config/reset',new URLSearchParams())};
+$('nw').onclick=()=>{if(confirm('Start a new world now? The current world and its villagers are lost.'))post('/config/world',new URLSearchParams(),'nw2')};
 document.querySelectorAll('[data-u]').forEach(b=>b.onclick=()=>post(b.dataset.u,new URLSearchParams(b.dataset.c?{cmd:b.dataset.c}:{}),b.dataset.c?'nm':0));
 load(1);
 </script>)HTML";
