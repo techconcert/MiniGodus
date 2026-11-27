@@ -44,6 +44,7 @@ void shaman_reset(void) {
   s_pers = (uint8_t)((h >> 3) & 3);
 }
 
+int shaman_waiting(void) { return s_waiting; }
 int shaman_pers(void) { return s_pers; }
 int shaman_cast_dir(void) { return s_wd; }
 int shaman_stuck(void) { int v = s_stuck; s_stuck = 0; return v; }

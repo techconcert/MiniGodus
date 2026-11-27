@@ -467,8 +467,7 @@ static int put_num(char* p, int n) {      // 0..9999
 }
 
 // Left (r7): two counters at a time, each as tall as the clock: the 8x8 icon doubled to 16x16 and digits of the clock's size. The pairs
-// alternate every 3.5 s: faith and population, then food and wood. 9999 faith and 48 villagers (or 999 food and 999 wood) end at x = 114,
-// the clock starts at x = 119 or later, so they never touch.
+// alternate every 3.5 s: faith and population, then food and wood. 9999 faith and 48 villagers (or 999 food and 999 wood) end at x = 110 or less.
 static int draw_counter(uint16_t* out, int y0, int x, int id) {
   const uint8_t* ic = GC_ICONS(id);
   for (int r = 0; r < 16; r++) {
@@ -482,23 +481,24 @@ static int draw_counter(uint16_t* out, int y0, int x, int id) {
   }
   char nb[5];
   int len = put_num(nb, village_stat(HUD_STAT[id]));
-  draw_text(out, y0, x + 18, 1, nb, g_ui[P_WHITE], 2, 0);
-  return x + 18 + len * 12;
+  draw_text(out, y0, x + 17, 1, nb, g_ui[P_WHITE], 2, 0);
+  return x + 17 + len * 12;
 }
-static void draw_counters(uint16_t* out, int y0) {
+static int draw_counters(uint16_t* out, int y0) {
   static const uint8_t ORDER[4] = {0, 3, 1, 2};         // icon ids: 0 faith, 1 food, 2 wood, 3 population
   int pair = (s_hud_alt & 1) * 2;
-  int x = draw_counter(out, y0, 2, ORDER[pair]);
-  draw_counter(out, y0, x + 4, ORDER[pair + 1]);
+  int x = draw_counter(out, y0, 1, ORDER[pair]);
+  return draw_counter(out, y0, x + 3, ORDER[pair + 1]);
 }
 
 static void draw_top(uint16_t* out, int y0) {
   const uint16_t ink = g_ui[P_WHITE];
   fill_rect(out, y0, 0, 0, GC_W, GC_STRIP_H, g_ui[P_OUTLINE]);
-  draw_counters(out, y0);
+  int left_end = draw_counters(out, y0);
   char t[6] = {'-', '-', ':', '-', '-', 0};
   if (g_clock_valid) { fmt2(t, g_hour); fmt2(t + 3, g_min); }
-  // temperature at the right edge, weather icon left of it, the clock right aligned a few pixels left of the icon
+  // r8: resources | weather icon + temperature | clock at the right edge, with two character widths (24 px) between temperature and clock.
+  // Only when the left pair is at its widest (9999 faith, 48 villagers) and the temperature has three characters does the gap shrink, to what is free.
   int deg, f;
   char tb[8];
   int len = 0;
@@ -513,10 +513,13 @@ static void draw_top(uint16_t* out, int y0) {
     tb[len++] = '-'; tb[len++] = '-';
   }
   tb[len] = 0;
-  int tx = GC_W - 4 - len * 12;
+  int cx0 = GC_W - 2 - 60;                             // the clock, right aligned
+  int gap = cx0 - len * 12 - 17 - left_end - 4;        // room between the pair and the icon (4 px stay free)
+  gap = gap > 24 ? 24 : (gap < 0 ? 0 : gap);
+  int tx = cx0 - gap - len * 12;
   draw_text(out, y0, tx, 1, tb, ink, 2, 0);
   weather_icon(out, y0, tx - 17, 2, world_weather(), ((G.live_flags & GC_WXF_NIGHT) || is_night() || want_bed()) ? 1 : 0);
-  draw_text(out, y0, tx - 17 - 4 - 60, 1, t, ink, 2, 0);
+  draw_text(out, y0, cx0, 1, t, ink, 2, 0);
 }
 
 static void draw_band(uint16_t* out, int y0) {
@@ -810,6 +813,12 @@ int32_t world_query(int key) {
     case GQ_Q_PHASE: return village_stat(250);
     case GQ_Q_MON_STAGE: return village_stat(251);
     case GQ_Q_MON_TYPE: return village_stat(252);
+    case GQ_Q_SHAMAN_MODE:
+      if (s_sh.act == GQ_ACT_SLEEP) return GQ_SM_SLEEP;
+      if (s_going_to_bed) return GQ_SM_BED;
+      if (s_sh.act == GQ_ACT_CAST) return GQ_SM_WORK;
+      if (village_stat(19) != 0) return s_walking && s_work == 1 ? GQ_SM_TO_SITE : (shaman_waiting() ? GQ_SM_WAIT : GQ_SM_WORK);
+      return s_walking ? GQ_SM_WANDER : GQ_SM_IDLE;
     case GQ_Q_HERO_ON_LAND: return world_walkable((s_sh.x + 8) >> 4, (s_sh.y + 8) >> 4) ? 1 : 0;
     default: return key >= GQ_Q_VILLAGE ? village_stat(key - GQ_Q_VILLAGE) : 0;
   }

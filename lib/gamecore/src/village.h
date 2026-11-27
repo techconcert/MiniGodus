@@ -45,6 +45,7 @@ int  shaman_target(int sx, int sy, int* tx, int* ty);   // 1: cast at tile (tx, 
 void shaman_apply(void);                                // the cast is done: pay faith, change the tile
 void shaman_abort(void);                                // he cannot reach the tile: drop the project
 int  shaman_stuck(void);                                // 1 once when he is walled in with no ramp to cut: godus.cpp puts him back on the green
+int shaman_waiting(void);                                // 1 while the project waits (faith, an occupied plot)
 const char* shaman_label(void);                         // "DIGGING POND" ..., 0 when idle
 int  shaman_pers(void);
 int  shaman_cast_dir(void);                             // +1 raising, -1 lowering, 0 clearing an object

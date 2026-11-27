@@ -110,23 +110,40 @@ static void test_bars() {
   CHECK(band != 0 || true);
 }
 
-// r7: the worst case of the top bar: 4 digits of faith and 2 of population (then 3 of food and of wood) with the temperature at -10 C: the clock
-// keeps its own columns (the counters end before x = 114, the clock starts at x = 119, so columns 114 to 118 stay empty)
-static void test_bar_fit() {
+// r8: the order is counters | weather icon + temperature | clock at the right edge. The longest empty run of columns right of x = 100 is the gap in
+// front of the clock (or the one behind the counters in the worst case): 24 px (two characters) normally, at least 6 px in the worst case.
+static void bar_case(int faith, int food, int wood, int villagers, int temp10, int min_gap, int* gap_out) {
   sim_start(3);
-  gc_set_live_weather(GQ_W_SNOW, -100, 0);
-  gc_set_clock(10, 0, 1);
-  gc_debug(GQ_DBG_ADD_VILLAGERS, 46);
-  gc_debug(GQ_DBG_FAITH, 9999); gc_debug(GQ_DBG_FOOD, 999); gc_debug(GQ_DBG_WOOD, 999);
+  gc_set_live_weather(GQ_W_SNOW, temp10, 0);
+  gc_set_clock(23, 59, 1);
+  gc_debug(GQ_DBG_ADD_VILLAGERS, villagers);
+  int worst = 999;
   for (int k = 0; k < 20; k++) {                       // 10 seconds: both pairs come up
     for (int i = 0; i < 2; i++) gc_tick(250);
-    gc_debug(GQ_DBG_FAITH, 9999); gc_debug(GQ_DBG_FOOD, 999); gc_debug(GQ_DBG_WOOD, 999);
+    gc_debug(GQ_DBG_FAITH, faith); gc_debug(GQ_DBG_FOOD, food); gc_debug(GQ_DBG_WOOD, wood);
     gqt::render_strip_guarded(0);
     uint16_t bg = gqt::strip[GC_W - 1 + 15 * GC_W];
-    int left_end = 0;
-    for (int x = 0; x < 114 + 5; x++) for (int y = 0; y < 16; y++) if (gqt::strip[y * GC_W + x] != bg) left_end = x;
-    CHECK(left_end <= 113);                              // nothing in columns 114 to 118: the counters do not reach the clock, the clock does not reach them
+    int right_ink = 0;
+    for (int x = 0; x < GC_W; x++) for (int y = 0; y < 16; y++) if (gqt::strip[y * GC_W + x] != bg) right_ink = x;
+    CHECK(right_ink >= GC_W - 8 && right_ink <= GC_W - 1);      // the clock stands at the right edge
+    // the gap in front of the clock: from the end of the temperature to the clock's first column (clock = last 60 px)
+    int cg = 0, run = 0;
+    for (int x = 0; x < GC_W - 2; x++) {
+      bool ink = false;
+      for (int y = 0; y < 16; y++) if (gqt::strip[y * GC_W + x] != bg) ink = true;
+      if (ink) run = 0; else { run++; if (x >= 100 && run > cg) cg = run; }
+    }
+    if (cg < worst) worst = cg;
+    CHECK(cg >= min_gap);
   }
+  *gap_out = worst;
+}
+static void test_bar_fit() {
+  int g1 = 0, g2 = 0, g3 = 0;
+  bar_case(150, 50, 50, 10, 210, 24, &g1);              // a normal town, 21 C
+  bar_case(999, 999, 999, 46, 210, 6, &g2);             // 999 / 48 / 21 C
+  bar_case(9999, 999, 999, 46, -100, 6, &g3);           // the worst case: 9999 faith, 48 villagers, -10 C
+  std::printf("top bar gap: normal %d px, 999/48/21C %d px, 9999/48/-10C %d px\n", g1, g2, g3);
 }
 
 int main() {
