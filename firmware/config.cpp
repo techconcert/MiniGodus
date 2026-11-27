@@ -299,7 +299,7 @@ void begin(bool safeMode) {
   if (safeMode) return;                          // safe mode registers no route
   ESP8266WebServer& s = srv();
   static const char* kHdr[] = { "Origin", "Referer" };
-  s.collectHeaders(kHdr, 2);                     // the POST routes check them (admitPost)
+  s.collectHeaders(kHdr, (size_t)2);                    // the POST routes check them (admitPost)
   s.on("/config", HTTP_GET, handlePage);
   s.on("/config", HTTP_POST, handleSave);
   s.on("/config.json", HTTP_GET, handleJson);
