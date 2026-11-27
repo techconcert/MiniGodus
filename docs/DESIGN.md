@@ -52,7 +52,7 @@ All buildings on flat land (single height). Unlocks are first guesses to tune by
 | Granary | 2x2 | 10 | raises food cap |
 | Shrine | 2x2 | 6 | faith bonus, elders pray |
 | Infirmary | 2x2/3x2 | first sick | heals |
-| Monument | 3x3, 5 stages | 30 | ends the world |
+| Monument | 3x3, 5 stages | 28 (and day 21) | ends the world |
 
 ## The shaman
 Robed figure with staff, always on screen, one project at a time, tile by tile. Every 10 game minutes scores needs and picks the most pressing affordable: food (<2 days or a source low), housing, water (none within 8 tiles of a home), health, wood, growth (next home tier), faith (shrine), monument (spare faith). Site search minimises levelling cost + walking distance + reserved-tile penalties. Rules: no coast -> dig a pond of >= 6 tiles near the village and stock it; keep shore tiles by fishing huts clear; pre-flatten 3x3 plots when a tier unlocks; near the village neighbouring tiles differ by at most 1 level (cut ramps); never build on the lowest land next to water; terraform cost rises with layer; rock (7) untouchable until the monument stage. Personality biases choices.
@@ -66,7 +66,7 @@ Rain/drizzle: rain on screen, puddles on low tiles, fields +50%, sickness risk o
 3. Town (≈13-24): cottages, pens, orchard, granary, infirmary, ponds, 3x3 plots, 20-30 villagers.
 4. Monument (≈25+): manors, monument in 5 stages funded with spare faith; first generation dies of age.
 5. Final day: all gather and worship dawn to dusk. Summary screen (world name, days, peak population, births, deaths, buildings) stays until the next morning's wake time; the sleep schedule still darkens the screen.
-6. New world from a new seed. Village died out -> summary early, new world the next morning. New world button on the status page.
+6. New world from a new seed. Village died out -> summary early, new world the next morning. The New world button (with a confirmation) is on the Clock settings page, which the status page links to: the status page belongs to the recovery layer and is left untouched (r6 divergence).
 
 ## Screen
 15 rows of 16 px: top bar, 13 map rows (15x13 tiles visible), bottom band.
@@ -78,7 +78,7 @@ Rain/drizzle: rain on screen, puddles on low tiles, fields +50%, sickness risk o
 - Firmware < 500 KB (CI). Base ≈300 KB -> ≈150 KB for game + art.
 - Art ≈40 KB: 4-bit 16x16 tiles (128 B), 8x8 edge pieces (32 B), 16-colour palette per climate.
 - RAM ≈4-6 KB static game state; no heap, no libc in gamecore.
-- Save ≈1.7 KB as one multi-slot record (6 x 320 B slots) in 0x80000-0x82FFF; valid only if all slots share sequence + CRC; torn-write test extended. Save every 20 min and at each new day.
+- Save 1.8 KB as one multi-slot record (6 x 320 B slots, 300 B of payload each: settings 48, config 64, game 1688) in 0x80000-0x82FFF; valid only if all slots share sequence + CRC; torn-write test extended. Save every 20 min and at each new day.
 - 15-30 fps; smooth camera scroll at >= 15 fps; idle scenes redraw only changed strips.
 
 ## Releases
