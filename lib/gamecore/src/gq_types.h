@@ -7,6 +7,9 @@
 
 enum { GQ_SPRING, GQ_SUMMER, GQ_AUTUMN, GQ_WINTER };
 enum { GQ_W_CLEAR, GQ_W_CLOUDY, GQ_W_RAIN, GQ_W_STORM, GQ_W_FOG, GQ_W_SNOW, GQ_W_WINDY, GQ_W_COUNT };
+// r8 GQ_Q_SHAMAN_MODE values
+enum { GQ_SM_IDLE, GQ_SM_WANDER, GQ_SM_TO_SITE, GQ_SM_WORK, GQ_SM_SLEEP, GQ_SM_BED, GQ_SM_WAIT, GQ_SM_TO_SPOT };
+
 // What the shaman is doing (GQ_Q_HERO_ACT). The firmware only cares about GQ_ACT_SLEEP.
 enum { GQ_ACT_NONE, GQ_ACT_WANDER, GQ_ACT_SLEEP, GQ_ACT_CAST, GQ_ACT_COUNT };
 
@@ -37,6 +40,7 @@ enum {
   GQ_Q_PHASE,           // r6: 0 playing, 1 worship day, 2 the village is dying out, 3 summary (monument finished), 4 summary (extinct)
   GQ_Q_MON_STAGE,       // r6: monument stage 0 (none or only marked) .. 5 (finished)
   GQ_Q_MON_TYPE,        // r6: 0 pyramid, 1 stone circle, 2 great tree, 3 obelisk, 4 temple
+  GQ_Q_SHAMAN_MODE,     // r8: GQ_SM_* what the shaman is doing now
   GQ_Q_COUNT,
   GQ_Q_VILLAGE = 64     // GQ_Q_VILLAGE + n: village numbers (see village_stat in village.cpp: 0 population, 1 food, 2 wood, 3 faith, ...)
 };
@@ -84,7 +88,7 @@ typedef struct {
   uint16_t day;              //  32
   uint16_t minute;           //  34
   uint8_t  landform, climate;//  36  current world (same as hist 0)
-  uint8_t  hist_n, pad0;     //  38  1..4 worlds remembered, newest first
+  uint8_t  hist_n, pad0;     //  38  1..4 worlds remembered, newest first; pad0 (r8): robe colour of this world + 1, 0 = from the seed
   uint32_t hist_seed[4];     //  40  the last 4 worlds: seed, landform, climate
   uint8_t  hist_land[4];     //  56
   uint8_t  hist_clim[4];     //  60

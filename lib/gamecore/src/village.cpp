@@ -79,6 +79,24 @@ int village_phase(void) { return s_phase; }
 int village_mon_stage(void) { int b = mon_b(); return b < 0 ? 0 : B[b].st; }
 int village_mon_type(void) { uint32_t h = G.s.seed * 0x9E3779B1u; h ^= h >> 15; h *= 0x85EBCA6Bu; h ^= h >> 13; return (int)((h >> 4) % 5); }
 int village_mon_pos(int* x, int* y) { int b = mon_b(); if (b < 0) return 0; *x = B[b].x; *y = B[b].y; return 1; }
+// r8: the shaman's idle choices draw from their own generator, so that they never change the game's random sequence (the villagers' lives)
+static uint32_t s_ir = 1;
+static uint8_t s_strand, s_rescued;                                 // hourly checks in a row that found somebody cut off from the green
+uint32_t village_idle_rnd(void) { s_ir = s_ir * 1664525u + 1013904223u; return s_ir >> 8; }
+void village_idle_seed(uint32_t seed) { s_ir = seed * 2654435761u + 1; }
+// r8: places the shaman visits when he has nothing to build. kind 0 shrine, 1 monument, 2 a field or orchard, 3 a home. One of the finished ones, picked at random.
+int village_spot(int kind, int* x, int* y) {
+  int n = 0, pick = -1;
+  for (int b = 0; b < MAXB; b++) {
+    if (!bused(b) || (B[b].tp & SITE)) continue;
+    int t = btype(b);
+    int ok = kind == 0 ? t == B_SHRINE : (kind == 1 ? t == B_MONUMENT : (kind == 2 ? (t == B_FIELD || t == B_ORCHARD) : (t == B_HUT || t == B_COTTAGE || t == B_MANOR || t == B_TENT)));
+    if (ok && (int)(village_idle_rnd() % (uint32_t)(++n)) == 0) pick = b;
+  }
+  if (pick < 0) return 0;
+  *x = B[pick].x; *y = B[pick].y;
+  return 1;
+}
 static const uint8_t NVAR[B_COUNT] = {1, 1, 2, 1, 4, 2, 3, 4, 1, 1, 1, 1, 2, 1};
 static void bdim(int tp, int var, int* w, int* h) {
   int a = 1, b = 1;
@@ -459,6 +477,27 @@ void village_minute(int m, int night) {
       if (is_moving(i)) set_act(i, A_IDLE);
     }
 
+  // r8: somebody cut off from the green on a terrace pocket (ground raised or a building put round him). The shaman cuts ramps to the pocket
+  // (access_project); only when that has not helped for 4 hours is he put on the nearest connected tile (a rare, counted jump), because a
+  // water carrier left there meant thirst for the whole village. Only a water carrier is moved: anybody else stays and waits for the ramps.
+  if (m % 60 == 0 && pop() > 0) {
+    int sx_, sy_;
+    world_flow(cx(), cy());
+    if (!stranded_villager(&sx_, &sy_)) s_strand = 0;
+    else if (++s_strand >= 4) {
+      s_strand = 0;
+      for (int i = 0; i < MAXV; i++)
+        if (used(i) && vact(i) == A_IDLE && vrole(i) == R_CARRIER && g_dist[V[i].y * WM + V[i].x] == 255 && world_walkable(V[i].x, V[i].y)) {
+          int x, y;
+          if (!world_nearest_connected(V[i].x, V[i].y, cx(), cy(), &x, &y)) continue;
+          world_audit_jump((V[i].x > x ? V[i].x - x : x - V[i].x) + (V[i].y > y ? V[i].y - y : y - V[i].y));
+          if (s_rescued < 255) s_rescued++;
+          mark_tile(V[i].x, V[i].y); V[i].x = (uint8_t)x; V[i].y = (uint8_t)y; mark_tile(x, y);
+          if (is_moving(i)) set_act(i, A_IDLE);
+        }
+    }
+  }
+
   if (meal_minute(m)) meal(m);
 
   // exposure: rain on people outside, cold on people outside
@@ -838,6 +877,8 @@ int village_stat(int which) {
     case 262: return s_mon_day;
     case 263: return s_lean;
     case 248: return s_aborts;
+    case 247: return s_turned;
+    case 246: return s_rescued;
     case 31: return s_pers;
     case 32: return count_ramps();
     case 33: return s_ponds;
@@ -878,6 +919,7 @@ int village_stat(int which) {
 
 // ---------------------------------------------------------------- new game, save
 void village_reset(int mix) {
+  s_strand = 0; s_rescued = 0;
   for (int i = 0; i < MAXV; i++) { V[i].fl = 0; V[i].ra = 0; s_home[i] = 255; s_ill[i] = 0; }
   for (int b = 0; b < MAXB; b++) B[b].tp = 0xFF;
   nature_reset();

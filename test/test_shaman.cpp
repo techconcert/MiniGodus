@@ -8,6 +8,8 @@
 #include "../lib/gamecore/src/world.h"
 #include "../lib/gamecore/src/village.h"
 #include <set>
+#include <string>
+#include <cstring>
 #include <vector>
 
 enum { Q_POP = 0, Q_FOOD = 1, Q_WOOD = 2, Q_FAITH = 3, Q_BUILT = 6, Q_SITES = 7, Q_CONTENT = 15, Q_EARNED = 16, Q_SPENT = 17, Q_CASTS = 18,
@@ -107,7 +109,7 @@ static void test_twenty_days() {
   }
   std::printf("20 days: casts %d, built %d, plots %d, ponds %d, bad slopes %d, building types seen %d\n", total_casts, total_built, plots, ponds, bad, (int)types.size());
   std::printf("faith earned %ld, spent %ld (%ld%%)\n", total_earned, total_spent, total_earned ? total_spent * 100 / total_earned : 0);
-  CHECK(total_spent * 100 >= total_earned * 20);   // r6: the towns are bigger (more faith than the land can take, the cap is 9999) and the rest is banked for the monument; r5 spent 60%
+  CHECK(total_spent * 100 >= total_earned * 15);   // r8: 15% (he gives up fewer projects, so fewer wasted casts); r6: the towns are bigger (more faith than the land can take, the cap is 9999) and the rest is banked for the monument; r5 spent 60%
   CHECK(seeds_with_casts == 20);
   CHECK(grew >= 18);                              // the population grows
   CHECK(total_built >= 20 * 5);
@@ -227,12 +229,53 @@ static void test_save_load() {
   check_rules("loaded + day");
 }
 
+// ------------------------------------------------------------------------------------------------ purposeful shaman (r8)
+// 20 days on 6 seeds: the shaman never wanders aimlessly for long (when he has nothing to build he walks to the shrine, the monument, the
+// fields, a home or the green and stands there), the band label is never empty and follows the project, and projects given up stay bounded.
+static void test_purposeful() {
+  long awake = 0, wander = 0, spots = 0, stands = 0, aborts = 0, turned = 0;
+  int longest = 0;
+  std::set<std::string> labels;
+  for (uint32_t seed = 1; seed <= 6; seed++) {
+    gc_init(GC_SCENE_VILLAGE, 1, 0);
+    gc_debug(GQ_DBG_SET_SEED, (int32_t)(seed * 7919u + 13));
+    gc_set_live_weather(GQ_W_CLEAR, 180, 0);
+    int wall = 8 * 60, run = 0;
+    for (int d = 0; d < 20; d++)
+      for (int m = 0; m < 1440; m++) {
+        wall = (wall + 1) % 1440;
+        gc_set_clock(wall / 60, wall % 60, 1);
+        for (int i = 0; i < 4; i++) gc_tick(2000);
+        const char* l = world_state_label();
+        CHECK(l && l[0]);                                           // never empty
+        labels.insert(l);
+        int md = (int)gc_query(GQ_Q_SHAMAN_MODE), pk = vq(Q_PROJ);
+        if (md == GQ_SM_SLEEP || md == GQ_SM_BED) { CHECK(!std::strcmp(l, "SLEEPING") || !std::strcmp(l, "GOING TO BED")); continue; }
+        awake++;
+        if (md == GQ_SM_WANDER) { wander++; if (++run > longest) longest = run; } else run = 0;
+        if (md == GQ_SM_TO_SPOT) { spots++; CHECK(!std::strncmp(l, "WALKING", 7)); }
+        if (md == GQ_SM_IDLE) { stands++; CHECK(pk == 0); }
+        if (pk != 0 && md == GQ_SM_WORK) CHECK(std::strcmp(l, "RESTING") != 0 && std::strncmp(l, "WALKING TO S", 12) != 0 && std::strcmp(l, "PRAYING") != 0);   // working: the project, not an idle label
+        if (pk != 0 && md == GQ_SM_TO_SITE) CHECK(std::strstr(l, "ING") != nullptr);
+      }
+    aborts += vq(248); turned += vq(247);
+  }
+  std::printf("shaman, 6 worlds x 20 days: awake %ld min, aimless wander %.1f%% (longest run %d min), walking to a place %.1f%%, standing at one %.1f%%, projects given up %ld, sites turned down at planning %ld\n",
+              awake, 100.0 * wander / awake, longest, 100.0 * spots / awake, 100.0 * stands / awake, aborts, turned);
+  std::printf("labels seen: %d\n", (int)labels.size());
+  CHECK(wander * 100 <= awake * 15);
+  CHECK(longest <= 60);
+  CHECK(aborts <= 6 * 7);                                        // under r7 (7.6 per world over 60 worlds, 39 on these six), above r8's 40 on these six (4.4 per world over 60)
+  CHECK(labels.size() >= 8);
+}
+
 int main() {
   test_pond();
   test_rock_and_faith();
   test_save_load();
   test_all_buildings();
   test_twenty_days();
+  test_purposeful();
   std::printf("test_shaman: all passed\n");
   return 0;
 }
