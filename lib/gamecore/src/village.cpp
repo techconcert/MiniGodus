@@ -6,6 +6,7 @@
 // step round, in the shared scratch buffer g_dist.
 #include "village.h"
 #include "village_art_ids.h"
+#include "monument_art_ids.h"
 
 // Vil.fl: bits 0-1 age class, 2 female, 3 used, 4 weak, 5 and Vil.ra bit 7: a mother's birth cooldown in days (0..3); bits 6-7 facing
 enum { F_AGE = 3, F_FEM = 4, F_USED = 8, F_WEAK = 16 };
@@ -30,6 +31,13 @@ static uint8_t  s_fire[(MAXB + 7) / 8];                // homes with a fire lit 
 static uint8_t  s_src, s_content, s_roles_dirty;      // food sources today (bits: grain, fruit, animal, fish), content today, roles need a refresh
 static uint8_t  s_water, s_vanim, s_rr, s_woke, s_last_plan;
 static uint32_t s_vacc, s_anim_acc, s_rng, s_earned;
+// r6: the arc of the world (phase, monument pace, statistics for the summary), fish stocks, animals
+static uint8_t  s_phase, s_beat, s_peak, s_lean, s_fishn;
+static uint16_t s_mon_day, s_built_tot, s_pen_dead, s_pen_born, s_fish_caught, s_settlers;
+static uint16_t s_fish_a[8];                           // fish stock of each water body: the lowest tile number of the body ...
+static uint8_t  s_fish_s[8];                           // ... and its stock
+enum { MON_MIN_DAY = 21, MON_GAP_DAYS = 2, WORSHIP_END = 20 * 60, SETTLER_EVERY = 3, SETTLER_MAX_POP = 36 };
+static int mon_cost(int stage) { static const uint16_t C[6] = {0, 1300, 2200, 3200, 4500, 6500}; return C[stage < 0 ? 0 : (stage > 5 ? 5 : stage)]; }
 
 static uint32_t vr(void) { s_rng ^= s_rng << 13; s_rng ^= s_rng >> 17; s_rng ^= s_rng << 5; return s_rng; }
 
@@ -66,13 +74,18 @@ static int bvar(int b) { return (B[b].tp >> 4) & 3; }
 static int bused(int b) { return B[b].tp != 0xFF; }
 static int bsite(int b) { return bused(b) && (B[b].tp & SITE); }
 static int bdone(int b, int tp) { return bused(b) && !(B[b].tp & SITE) && btype(b) == tp; }
-static const uint8_t NVAR[B_COUNT] = {1, 1, 2, 1, 4, 2, 3, 4, 1, 1, 1, 1, 2};
+static int mon_b(void) { for (int b = 0; b < MAXB; b++) if (bused(b) && !(B[b].tp & SITE) && btype(b) == B_MONUMENT) return b; return -1; }
+int village_phase(void) { return s_phase; }
+int village_mon_stage(void) { int b = mon_b(); return b < 0 ? 0 : B[b].st; }
+int village_mon_type(void) { uint32_t h = G.s.seed * 0x9E3779B1u; h ^= h >> 15; h *= 0x85EBCA6Bu; h ^= h >> 13; return (int)((h >> 4) % 5); }
+int village_mon_pos(int* x, int* y) { int b = mon_b(); if (b < 0) return 0; *x = B[b].x; *y = B[b].y; return 1; }
+static const uint8_t NVAR[B_COUNT] = {1, 1, 2, 1, 4, 2, 3, 4, 1, 1, 1, 1, 2, 1};
 static void bdim(int tp, int var, int* w, int* h) {
   int a = 1, b = 1;
   switch (tp) {
     case B_HUT: case B_LUMBER: case B_GRANARY: case B_SHRINE: a = b = 2; break;
     case B_COTTAGE: case B_ORCHARD: a = (var & 1) ? 2 : 3; b = (var & 1) ? 3 : 2; break;
-    case B_MANOR: a = b = 3; break;
+    case B_MANOR: case B_MONUMENT: a = b = 3; break;
     case B_FIELD: a = 2 + (var & 1); b = 2 + ((var >> 1) & 1); break;
     case B_PEN: if (var == 0) { a = 3; b = 2; } else if (var == 1) { a = 2; b = 3; } else a = b = 3; break;
     case B_FISH: if (var & 1) { a = 1; b = 2; } else { a = 2; b = 1; } break;
@@ -83,9 +96,9 @@ static void bdim(int tp, int var, int* w, int* h) {
 }
 static void bdims(int b, int* w, int* h) { bdim(btype(b), bvar(b), w, h); }
 static int cap_of(int tp) { static const uint8_t C[4] = {2, 4, 6, 8}; return tp < 4 ? C[tp] : 0; }
-static int need_min(int tp) { static const uint8_t N[B_COUNT] = {20, 60, 90, 140, 15, 40, 40, 45, 40, 50, 60, 70, 60}; return N[tp]; }
-static int cost_wood(int tp) { static const uint8_t C[B_COUNT] = {4, 10, 16, 26, 2, 8, 10, 8, 6, 8, 12, 14, 12}; return C[tp]; }
-static int unlock_pop(int tp) { static const uint8_t U[B_COUNT] = {0, 6, 14, 24, 0, 8, 10, 0, 0, 4, 10, 6, 0}; return U[tp]; }
+static int need_min(int tp) { static const uint8_t N[B_COUNT] = {20, 60, 90, 140, 15, 40, 40, 45, 40, 50, 60, 70, 60, 1}; return N[tp]; }
+static int cost_wood(int tp) { static const uint8_t C[B_COUNT] = {4, 10, 16, 26, 2, 8, 10, 8, 6, 8, 12, 14, 12, 0}; return C[tp]; }
+static int unlock_pop(int tp) { static const uint8_t U[B_COUNT] = {0, 6, 14, 24, 0, 8, 10, 0, 0, 4, 10, 6, 0, 28}; return U[tp]; }
 static int is_home(int tp) { return tp <= B_MANOR; }
 static int is_crop(int tp) { return tp == B_FIELD || tp == B_ORCHARD; }
 // building codes in a save: type and variant in 5 bits
@@ -176,6 +189,7 @@ static void flow_key(int key) {
 }
 
 static int job_key(int i) {
+  if (s_phase == PH_WORSHIP) { int b = mon_b(); return b < 0 ? K_CENTER : b + 1; }          // the worship day: everybody gathers at the monument
   if (sick(i)) { int b = nth_bld(B_INFIRM, 0); return b < 0 ? 0 : b + 1; }          // the sick go to the infirmary, if there is one
   switch (vrole(i)) {
     case R_FARMER: { int b = nth_crop(rank_of(i)); return b < 0 ? 0 : b + 1; }
@@ -257,6 +271,7 @@ static void assign_roles(void) {
     if (!used(i) || taken[i]) continue;
     set_role(i, food_low ? R_FISHER : (s_wood < 60 ? R_LUMBER : R_IDLE));
   }
+  if (s_phase == PH_WORSHIP) for (int i = 0; i < MAXV; i++) if (used(i)) set_role(i, R_ELDER);      // everybody prays
   for (int i = 0; i < MAXV; i++) if (used(i) && (vact(i) == A_GO || vact(i) == A_WORK)) set_act(i, A_IDLE);
 }
 
@@ -310,16 +325,30 @@ void village_new_day(int night) {
     else if (vcls(i) == AGE_ADULT && d >= l - 4) { V[i].fl = (uint8_t)((V[i].fl & ~F_AGE) | AGE_ELDER); set_role(i, R_ELDER); }
   }
   rebuild_homes();
+  if (pop() > 0 && pop() <= 6 && s_food < (uint16_t)(pop() * 3)) s_food = (uint16_t)(s_food + 2 * pop());      // a small band forages berries and roots when the stores run dry
+  // the monument is finished: today is the worship day
+  if (s_phase == PH_PLAY && village_mon_stage() >= 5 && G.s.day > s_mon_day) { s_phase = PH_WORSHIP; s_roles_dirty = 1; }
   // food variety: three or more sources eaten in a day make people content (+25% faith) for the rest of that day
   s_src = 0; s_content = 0;
-  // animals breed when they are fed: a herder tends them and the stores are not empty
+  // animals: they breed when they are fed (a herder tends them and the stores are not empty), a lean spell starves one animal per pen
+  // and day, and they die of old age (3% per animal and day); a pen that lost its pair gets a wild pair when things are good again
   int herders = 0;
   for (int i = 0; i < MAXV; i++) if (used(i) && vrole(i) == R_HERDER) herders++;
-  for (int b = 0; b < MAXB; b++)
-    if (bdone(b, B_PEN)) {
-      int n = B[b].st;
-      if (n >= 2 && n < 10 && s_food >= (uint16_t)(pop() * 3) && herders) B[b].st = (uint8_t)(n + 1);
-    }
+  {
+    int pp = pop(), fed = s_food >= (uint16_t)(pp * 3);
+    if (s_food < (uint16_t)(pp * 2)) { if (s_lean < 255) s_lean++; } else s_lean = 0;
+    for (int b = 0; b < MAXB; b++)
+      if (bdone(b, B_PEN)) {
+        int n = B[b].st;
+        if (n > 0 && s_lean >= 2) { n--; s_pen_dead++; }
+        if (n > 0 && (int)(vr() % 100) < n * 3) { n--; s_pen_dead++; }
+        if (n >= 2 && n < 10 && fed && herders) { n++; s_pen_born++; }
+        else if (n < 2 && fed && herders && G.s.day % 5 == 0) { n += 2; s_pen_born += 2; }
+        B[b].st = (uint8_t)n;
+        mark_tile(B[b].x, B[b].y);
+      }
+  }
+  fish_day();
   conditions();
   sickness_day();
   nature_day();
@@ -335,7 +364,9 @@ void village_new_day(int night) {
     if (w < 0 || m < 0) break;
     int p = pop();
     if (cool(w) > 0 || p >= MAXV || p >= capacity() || s_food < (uint16_t)(p * 6)) continue;
-    int i = add_villager(AGE_CHILD, (int)(vr() & 1), 0, cx(), cy());
+    int nf = 0, nm = 0;
+    for (int j = 0; j < MAXV; j++) if (used(j)) { if (V[j].fl & F_FEM) nf++; else nm++; }
+    int i = add_villager(AGE_CHILD, nf < nm ? 1 : (nf > nm ? 0 : (int)(vr() & 1)), 0, cx(), cy());      // the sexes stay balanced, so there are couples
     if (i < 0) break;
     rebuild_homes();
     int x, y;
@@ -345,6 +376,16 @@ void village_new_day(int night) {
     set_cool(w, 3);
     s_births++;
     mark_tile(x, y);
+  }
+  // settlers: a young couple walks in when there is room and the stores are full (the town needs more hands than births give)
+  {
+    int p = pop();
+    if (s_phase == PH_PLAY && G.s.day >= 2 && G.s.day % SETTLER_EVERY == 0 && p >= 2 && p + 2 <= MAXV && p + 2 <= capacity() && p < SETTLER_MAX_POP && s_food >= (uint16_t)(p * 8 + 20)) {
+      for (int k = 0; k < 2; k++) if (add_villager(AGE_ADULT, k, 8, cx(), cy()) >= 0) s_settlers++;
+      rebuild_homes();
+      s_roles_dirty = 1;
+      mark_tile(cx(), cy());
+    }
   }
 }
 
@@ -374,8 +415,20 @@ static void meal(int m) {
 
 static int meal_minute(int m) { return m == MEAL_1 || m == MEAL_2 || m == MEAL_3; }
 
+// The arc: statistics, the end of the village, the end of the worship day. Run every minute, and once after a clock jump that played no
+// minutes (so a jump over the end of the worship day still ends it, and a dying village still counts down).
+void village_arc(int m) {
+  int p = pop();
+  if (p > s_peak) s_peak = (uint8_t)p;
+  if (!p && s_phase <= PH_WORSHIP) { s_phase = PH_DYING; s_beat = 3; }
+  else if (s_phase == PH_DYING && s_beat && --s_beat == 0) s_phase = PH_EXTINCT;
+  if (s_phase == PH_WORSHIP && m >= WORSHIP_END) s_phase = PH_DONE;
+}
+
 void village_minute(int m, int night) {
   int changed = 0;
+  if (s_phase >= PH_DONE) return;                              // the world has ended: the summary is on screen, nothing moves any more
+  G.serial++;                                                  // the saved state changes every minute: it is written every 20 minutes
   conditions();
   s_night_now = (uint8_t)night;
   int stay = night || s_storm;                                  // asleep, or sheltering from a storm
@@ -449,7 +502,7 @@ void village_minute(int m, int night) {
         break;
       }
       case R_FISHER:
-        if (m % 15 == 0) { s_food = (uint16_t)(s_food + (count_done(B_FISH) ? 3 : 2) + (s_rainy ? 1 : 0)); s_src |= 8; }      // fish bite better in the rain
+        if (m % 15 == 0 && fish_take(V[i].x, V[i].y)) { s_food = (uint16_t)(s_food + (count_done(B_FISH) ? 3 : 2) + (s_rainy ? 1 : 0)); s_src |= 8; }      // fish bite better in the rain, and only while the water has fish
         break;
       case R_LUMBER:
         if (m % 8 == 0 && !lumberjack_work(V[i].x, V[i].y)) set_act(i, A_IDLE);
@@ -457,7 +510,7 @@ void village_minute(int m, int night) {
       case R_BUILDER:
         if (sb >= 0 && bsite(sb)) {
           if (++B[sb].st >= need_min(btype(sb))) {
-            B[sb].tp &= (uint8_t)~SITE; B[sb].st = btype(sb) == B_PEN ? 2 : 0; changed = 1; sb = first_site();
+            B[sb].tp &= (uint8_t)~SITE; B[sb].st = btype(sb) == B_PEN ? 2 : 0; changed = 1; s_built_tot++; sb = first_site();
             mark_tile(B[sb < 0 ? 0 : sb].x, B[sb < 0 ? 0 : sb].y);
           }
         } else set_act(i, A_IDLE);
@@ -466,6 +519,9 @@ void village_minute(int m, int night) {
     }
   }
   if (changed) { for (int b = 0; b < MAXB; b++) if (bused(b)) mark_tile(B[b].x, B[b].y); rebuild_homes(); assign_roles(); }
+  // a lumberjack who cannot reach any tree gathers brushwood and fallen boughs instead: a little wood, never none
+  if (m % 30 == 0 && !night && !s_storm)
+    for (int i = 0; i < MAXV; i++) { int a = vact(i); if (used(i) && vrole(i) == R_LUMBER && (a == A_IDLE || a == A_GO) && !(V[i].fl & F_WEAK) && !sick(i)) s_wood++; }
 
   // the fields grow by themselves, 4 minutes per timer unit: half as fast again in rain, not at all under snow or frost
   if (m % 4 == 0) {
@@ -504,13 +560,15 @@ void village_minute(int m, int night) {
   // morning: new roles; during the day: plan buildings, send idle people to their work
   if (!night) {
     if (s_woke) { s_woke = 0; assign_roles(); }
-    if (m % 10 == 0 && s_last_plan != (uint8_t)(m / 10)) { s_last_plan = (uint8_t)(m / 10); shaman_plan(); }
+    if (m % 10 == 0 && s_last_plan != (uint8_t)(m / 10)) { s_last_plan = (uint8_t)(m / 10); if (s_phase == PH_PLAY) shaman_plan(); }
     if (s_roles_dirty) { s_roles_dirty = 0; assign_roles(); }
     for (int i = 0; i < MAXV; i++) {
       if (!used(i)) continue;
+      if (s_phase == PH_WORSHIP) { if (vact(i) == A_IDLE && job_key(i)) set_act(i, A_GO); continue; }      // everybody walks to the monument, weak or not
       if (vact(i) == A_IDLE && !(V[i].fl & F_WEAK) && (sick(i) || (vrole(i) != R_CHILD && vrole(i) != R_IDLE)) && !s_storm && job_key(i)) set_act(i, A_GO);
     }
   }
+  village_arc(m);
 }
 
 // ---------------------------------------------------------------- walking
@@ -561,6 +619,7 @@ void village_tick(uint32_t dt, int night) {
       if (a == A_WORK || a == A_EAT || vrole(i) == R_CHILD || vrole(i) == R_ELDER || sick(i)) mark_tile(V[i].x, V[i].y);
     }
     for (int b = 0; b < MAXB; b++) if (bused(b) && fire_at(b)) mark_tile(B[b].x, B[b].y - 1);      // chimney smoke
+    { int mb = mon_b(); if (mb >= 0 && B[mb].st >= 5 && s_phase <= PH_WORSHIP) for (int j = 0; j < 3; j++) mark_tile(B[mb].x + 1, B[mb].y + j); }      // the finished monument glows
   }
   if (s_vacc < VSTEP_MS) return;
   int steps = (int)(s_vacc / VSTEP_MS);
@@ -569,10 +628,14 @@ void village_tick(uint32_t dt, int night) {
   // idle villagers and children fidget around their spot
   static const int8_t D[4][2] = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}};
   for (int i = 0; i < MAXV; i++) {
-    if (!used(i) || (vact(i) != A_IDLE) || (vr() & 15)) continue;
+    if (!used(i) || (vr() & 15)) continue;
+    int worship = s_phase == PH_WORSHIP && vact(i) == A_WORK;      // the crowd at the monument shuffles about it
+    if (vact(i) != A_IDLE && !worship) continue;
     int dd = (int)(vr() & 3), nx = V[i].x + D[dd][0], ny = V[i].y + D[dd][1];
-    int dx = nx - cx(), dy = ny - cy();
-    if (!world_walkable(nx, ny) || !world_step_ok(V[i].x, V[i].y, nx, ny) || dx * dx + dy * dy > 64) continue;
+    int mbx = cx(), mby = cy();
+    if (worship) { int mb = mon_b(); if (mb >= 0) { mbx = B[mb].x + 1; mby = B[mb].y + 1; } }
+    int dx = nx - mbx, dy = ny - mby;
+    if (!world_walkable(nx, ny) || !world_step_ok(V[i].x, V[i].y, nx, ny) || dx * dx + dy * dy > (worship ? 14 : 64)) continue;
     mark_tile(V[i].x, V[i].y);
     V[i].x = (uint8_t)nx; V[i].y = (uint8_t)ny; V[i].fl = (uint8_t)((V[i].fl & 0x3F) | (dd << 6));
     mark_tile(nx, ny);
@@ -622,6 +685,15 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
     bdims(b, &w, &h);
     int px = B[b].x * GC_TILE, py = B[b].y * GC_TILE;
     if (py + h * GC_TILE <= wy0 || py >= wy0 + GC_STRIP_H || px + w * GC_TILE <= wx0 || px >= wx0 + GC_W) continue;
+    if (tp == B_MONUMENT) {                      // 3x3 tiles of art: the stage and the type of this world
+      int st = B[b].st, mt = village_mon_type();
+      for (int j = 0; j < 3; j++)
+        for (int i = 0; i < 3; i++) {
+          gc_cell c = st == 0 ? GC_VILLAGE(VA_SITE) : (st == 1 ? GC_MONUMENT(MA_STAGE1 + j * 3 + i) : GC_MONUMENT(MA_BASE + (mt * 4 + st - 2) * 9 + j * 3 + i));
+          blit_sprite(out, wy0, px + i * GC_TILE - wx0, py + j * GC_TILE, c, 0, 0, g_wpal);
+        }
+      continue;
+    }
     for (int j = 0; j < h; j++)
       for (int i = 0; i < w; i++) {
         int cell = -1;
@@ -659,6 +731,18 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
       }
   }
   draw_smoke(out, wx0, wy0);
+  {                                              // the finished monument glows: sparkles rise round it
+    int mb = mon_b();
+    if (mb >= 0 && B[mb].st >= 5 && s_phase <= PH_WORSHIP)
+      for (int k = 0; k < 10; k++) {
+        uint32_t h = mix32((uint32_t)(k * 977 + s_vanim * 131));
+        int sx = B[mb].x * GC_TILE + 4 + (int)(h % 40) - wx0, sy = B[mb].y * GC_TILE + 40 - (int)(((h >> 8) % 36) + ((s_vanim + k) & 3) * 3);
+        int dy = sy - wy0;
+        if (dy < 0 || dy >= GC_STRIP_H - 1 || sx < 0 || sx >= GC_W - 1) continue;
+        uint16_t col = (k & 1) ? g_act[P_WHITE] : g_act[P_YELLOW];
+        out[dy * GC_W + sx] = col; out[dy * GC_W + sx + 1] = col; out[(dy + 1) * GC_W + sx] = col;
+      }
+  }
   // villagers
   uint8_t rm[16];
   // painter's order: villagers lower on the map are drawn after (over) the ones above them
@@ -676,6 +760,7 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
     if (cls == AGE_CHILD) cell = 9 + frame;
     else cell = (dir == 1 ? 3 : (dir >= 2 ? 6 : 0)) + frame;
     int bob = (cls == AGE_CHILD && act == A_IDLE && (s_vanim & 1)) ? -1 : 0;
+    if (s_phase == PH_WORSHIP && act == A_WORK) bob = ((s_vanim + i) & 1) ? 2 : 0;      // they bow to the monument
     blit_sprite(out, wy0, sx, sy + bob, GC_VILLAGERS(cell), dir == 3, rm, g_act);
     if (act == A_SLEEP) { blit_sprite(out, wy0, sx, sy - 12, GC_ITEMS(6), 0, 0, g_act); continue; }
     if (act == A_WORK && !(V[i].fl & F_WEAK) && TOOL[role] >= 0) {
@@ -686,7 +771,7 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
     }
     if (sick(i)) { fill_rect(out, wy0, sx + 7, sy - 6, 2, 5, 0x47E0); fill_rect(out, wy0, sx + 5, sy - 4, 6, 2, 0x47E0); }      // a green cross
     else if (act == A_EAT) blit8(out, wy0, sx + 4, sy - 7, GC_ICONS(1));
-    else if (role == R_ELDER && act == A_WORK && (s_vanim & 1)) blit8(out, wy0, sx + 4, sy - 7, GC_ICONS(0));
+    else if (role == R_ELDER && act == A_WORK && ((s_vanim & 1) || s_phase == PH_WORSHIP)) blit8(out, wy0, sx + 4, sy - 7 + (((s_vanim + i) & 1) ? 1 : 0), GC_ICONS(0));
   }
 }
 
@@ -731,6 +816,20 @@ int village_stat(int which) {
     case 18: return (int)s_casts;
     case 19: return P.kind;
     case 30: return unreachable_buildings();
+    case 250: return s_phase;
+    case 251: return village_mon_stage();
+    case 252: return village_mon_type();
+    case 253: return s_peak;
+    case 254: return s_built_tot;
+    case 255: { int n = 0; for (int b = 0; b < MAXB; b++) if (bdone(b, B_PEN)) n += B[b].st; return n; }
+    case 256: return fish_total();
+    case 257: return s_pen_dead;
+    case 258: return s_fish_caught;
+    case 259: return s_settlers;
+    case 260: return s_pen_born;
+    case 261: return s_fishn;
+    case 262: return s_mon_day;
+    case 263: return s_lean;
     case 248: return s_aborts;
     case 31: return s_pers;
     case 32: return count_ramps();
@@ -779,52 +878,28 @@ void village_reset(int mix) {
   if (!s_rng) s_rng = 1;
   s_food = 18; s_wood = 12; s_faith = 0; s_water = 0; s_deaths = s_births = 0;
   s_sick = 0; s_src = s_content = s_roles_dirty = 0; s_earned = 0;
+  s_phase = PH_PLAY; s_beat = 0; s_peak = 2; s_mon_day = 0; s_built_tot = 0; s_settlers = 0;
   shaman_reset();
   s_vacc = s_anim_acc = 0; s_vanim = 0; s_rr = 0; s_woke = 0; s_last_plan = 255;
   place_start_tent();
+  s_built_tot = 1;
   add_villager(AGE_ADULT, 0, 8, cx(), cy());
   add_villager(AGE_ADULT, 1, 8, cx(), cy());
   rebuild_homes();
   assign_roles();
 }
 
-// 128 bytes: [0] marker, [1] villagers (<= 16), [2] buildings (<= 18), food, wood, faith, water, then 4-byte villagers
-// and 3-byte buildings (x, y, type+variant code, site flag, progress). A full multi-slot save of every villager and
-// building, and of the terraformed land, is release r6.
+// The saved game of r4 and r5 (128 bytes inside the 192-byte record of version 4): [0] marker, [1] villagers (<= 16), [2] buildings (<= 18),
+// food, wood, faith, water, then 4-byte villagers and 3-byte buildings (x, y, type+variant code, site flag, progress). It is only read
+// now (an r5 save is loaded and the next save is a full r6 one); the full save is in savepack.inc.h.
 enum { PK_V = 16, PK_B = 18, PK_V0 = 10, PK_B0 = 10 + 4 * 16 };
-
-void village_pack(uint8_t* p) {
-  for (int i = 0; i < 128; i++) p[i] = 0;
-  p[0] = 0x56;
-  int nv = 0, nb = 0;
-  for (int i = 0; i < MAXV && nv < PK_V; i++) {
-    if (!used(i)) continue;
-    uint8_t* q = p + PK_V0 + nv * 4;
-    uint32_t a = (uint32_t)(V[i].x & 31) | ((uint32_t)(V[i].y & 31) << 5) | ((uint32_t)(V[i].fl & F_AGE) << 10) | ((V[i].fl & F_FEM) ? 1u << 12 : 0) | ((V[i].fl & F_WEAK) ? 1u << 13 : 0) | (sick(i) ? 1u << 14 : 0);
-    q[0] = (uint8_t)a; q[1] = (uint8_t)(a >> 8); q[2] = V[i].age; q[3] = V[i].nd;
-    nv++;
-  }
-  // finished buildings first (a site is less valuable than a roof), then the sites
-  for (int pass = 0; pass < 2; pass++)
-    for (int b = 0; b < MAXB && nb < PK_B; b++) {
-      if (!bused(b) || ((B[b].tp & SITE) != 0) != (pass == 1)) continue;
-      uint8_t* q = p + PK_B0 + nb * 3;
-      uint32_t a = (uint32_t)(B[b].x & 31) | ((uint32_t)(B[b].y & 31) << 5) | ((uint32_t)kind_code(btype(b), bvar(b)) << 10) | ((B[b].tp & SITE) ? 1u << 15 : 0);
-      q[0] = (uint8_t)a; q[1] = (uint8_t)(a >> 8); q[2] = B[b].st;
-      nb++;
-    }
-  p[1] = (uint8_t)nv; p[2] = (uint8_t)nb;
-  p[3] = (uint8_t)s_food; p[4] = (uint8_t)(s_food >> 8);
-  p[5] = (uint8_t)s_wood; p[6] = (uint8_t)(s_wood >> 8);
-  p[7] = (uint8_t)s_faith; p[8] = (uint8_t)(s_faith >> 8);
-  p[9] = s_water;
-}
 
 void village_unpack(const uint8_t* p) {
   if (p[0] != 0x56 || p[1] > PK_V || p[2] > PK_B) { village_reset((int)g_world.start_x * 31 + g_world.start_y); return; }
   for (int i = 0; i < MAXV; i++) { V[i].fl = 0; V[i].ra = 0; s_home[i] = 255; s_ill[i] = 0; }
   for (int b = 0; b < MAXB; b++) B[b].tp = 0xFF;
   nature_reset();
+  s_phase = PH_PLAY; s_beat = 0; s_mon_day = 0; s_settlers = 0; s_peak = 2;
   s_rng = 0x2545F491u ^ ((uint32_t)p[3] << 8) ^ p[5];
   s_food = (uint16_t)(p[3] | (p[4] << 8)); s_wood = (uint16_t)(p[5] | (p[6] << 8)); s_faith = (uint16_t)(p[7] | (p[8] << 8)); s_water = p[9];
   if (s_food > 999) s_food = 999;
@@ -869,6 +944,7 @@ void village_unpack(const uint8_t* p) {
     if ((a >> 14) & 1) { s_ill[i] = 0x80; s_sick = 1; }
   }
   if (!pop()) village_reset((int)g_world.start_x * 31 + g_world.start_y);
+  s_peak = (uint8_t)pop(); s_built_tot = (uint16_t)nb;
   heal_terrain();                    // the land is generated again from the seed: make it fit the loaded buildings
   rebuild_homes();
   assign_roles();
@@ -889,6 +965,26 @@ void village_debug(int cmd, int32_t arg) {
       for (int k = 0; k < MAXV; k++) if (used(k) && (arg < 0 || k == arg) && !sick(k)) { s_ill[k] = (uint8_t)((s_ill[k] & 15) | 0x80); s_sick = 1; s_onsets++; mark_tile(V[k].x, V[k].y); }
       s_roles_dirty = 1;
       break;
+    case 7: {   // arg = stage 0..5: the monument stands at that stage (laid out on the best spot, no faith asked)
+      int stage = arg < 0 ? 0 : (arg > 5 ? 5 : arg), b = mon_b();
+      if (b < 0) {
+        s_wood = (uint16_t)(s_wood + cost_wood(B_MONUMENT));
+        Cand c;
+        if (!pick_site(B_MONUMENT, &c, 0)) break;
+        int w, h;
+        kdim(B_MONUMENT, 0, &w, &h);
+        for (int j = 0; j < h; j++) for (int i = 0; i < w; i++) { world_set_height(c.x + i, c.y + j, c.H); world_clear_object(c.x + i, c.y + j); }
+        b = lay_site(B_MONUMENT, 0, c.x, c.y, 0);
+        if (b < 0) break;
+        heal_terrain();
+      }
+      B[b].st = (uint8_t)stage;
+      s_mon_day = G.s.day;
+      for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) mark_tile(B[b].x + i, B[b].y + j);
+      break;
+    }
+    case 8: village_end_world(arg < 0 ? 0 : (arg > PH_EXTINCT ? PH_EXTINCT : (int)arg)); break;
+    case 9: for (int k = 0; k < MAXV; k++) if (used(k)) kill(k); break;      // everybody dies: the village is extinct
     case 6: {   // arg = index | class << 8 | 1 << 16 (weak): change that villager's age class
       int k = arg & 255, cls = (arg >> 8) & 3;
       if (k < MAXV && used(k) && cls <= AGE_ELDER) {
@@ -903,3 +999,12 @@ void village_debug(int cmd, int32_t arg) {
     default: break;
   }
 }
+
+// debug: force a phase (PH_WORSHIP: the worship day starts now; PH_DONE and PH_EXTINCT: the summary shows)
+void village_end_world(int phase) {
+  s_phase = (uint8_t)phase; s_beat = 0;
+  if (phase == PH_WORSHIP) { if (village_mon_stage() < 5) village_debug(7, 5); s_roles_dirty = 1; assign_roles(); }
+  gq_touch();
+}
+
+#include "savepack.inc.h"

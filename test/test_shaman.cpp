@@ -107,7 +107,7 @@ static void test_twenty_days() {
   }
   std::printf("20 days: casts %d, built %d, plots %d, ponds %d, bad slopes %d, building types seen %d\n", total_casts, total_built, plots, ponds, bad, (int)types.size());
   std::printf("faith earned %ld, spent %ld (%ld%%)\n", total_earned, total_spent, total_earned ? total_spent * 100 / total_earned : 0);
-  CHECK(total_spent * 100 >= total_earned * 60);   // he puts at least 60% of the faith into the land
+  CHECK(total_spent * 100 >= total_earned * 20);   // r6: the towns are bigger (more faith than the land can take, the cap is 9999) and the rest is banked for the monument; r5 spent 60%
   CHECK(seeds_with_casts == 20);
   CHECK(grew >= 18);                              // the population grows
   CHECK(total_built >= 20 * 5);
@@ -211,13 +211,13 @@ static void test_save_load() {
   gc_debug(GQ_DBG_ADD_VILLAGERS, 12);
   int wall = 7 * 60 + 59;
   for (int m = 0; m < 4 * 1440; m++) { minute(wall); if (m % 100 == 0) { gc_debug(GQ_DBG_WOOD, 500); gc_debug(GQ_DBG_FAITH, 300); } }
-  uint8_t buf[GC_SAVE_BYTES];
-  CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_BYTES);
+  uint8_t buf[GC_SAVE_TOTAL];
+  CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_TOTAL);
   int built = vq(Q_BUILT) + vq(Q_SITES);
   gc_init(GC_SCENE_VILLAGE, 5, 0);
   CHECK(gc_save_import(buf, sizeof buf) == 1);
   int after = vq(Q_BUILT) + vq(Q_SITES);
-  CHECK(after == (built < 18 ? built : 18));
+  CHECK(after == built);                                     // every building comes back
   CHECK(vq(Q_UNREACH) == 0 || after > 0);
   check_rules("loaded");
   for (int m = 0; m < 1440; m++) minute(wall);

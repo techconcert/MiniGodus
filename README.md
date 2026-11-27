@@ -5,13 +5,13 @@ spends the faith that villagers produce to reshape the land and to lay out homes
 workshops. You never press anything: it is a clock with a little world in it. The full plan is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-**Status: release r5, weather, sickness and wood.** The real weather now plays in the game. Rain, storms, snow, heat, cold and
-fog (the Open-Meteo reading the clock already fetches) change how the fields grow, how thirsty people are, how much firewood the
-village burns and who falls sick; there is rain, snow, lightning, haze and drifting cloud shadows on the screen. Villagers get sick
-(more often when hungry, thirsty, cold or wet), an infirmary with a healer cures them in a day, and untreated sickness can kill the
-old and the weak. Lumberjacks fell trees, plant saplings on the stumps and the forest grows back. The shaman (r4) still decides what
-to build; he now builds the infirmary for the first sick villager. The recovery layer, update page, rescue hotspot, WiFi, time
-zone, sleep schedule and flash saving are unchanged.
+**Status: release r6, the monument and the end of the world.** A world now has an arc. The village grows to a town, the shaman raises a
+monument in five stages with the faith the villagers have to spare, and when it is finished the next day is the worship day: everybody
+gathers at the monument from dawn to dusk. Then a summary of the world (days, peak population, births, deaths, buildings) stays on the
+screen until the next morning, and a new world starts from a new seed, very different from the last. The whole game is saved to flash
+(every villager, building, the map with felled trees and saplings, the monument and the statistics), animals die and breed, and every
+water body has a fish stock. The recovery layer, update page, rescue hotspot, WiFi, time zone and sleep schedule are unchanged (the only
+recovery-contract edits are listed in RELEASE-NOTES.md and the PR).
 
 **Download:** every build of the `main` branch is published on the
 [Releases page](https://github.com/techconcert/MiniGodus/releases). Releases are named by number
@@ -226,6 +226,75 @@ the forest is regenerated from the seed on load), nor is the sickness of the vil
 sick for the whole time (no partial recovery); the night dimming has no lit windows yet; weather does not stop the shaman casting; cloud shadows and the
 night dimming are drawn over buildings and people as a flat tint.
 
+## The monument and the end of the world (r6)
+
+**Arc of a world.** Landing (days 1 to 3): a couple, a tent, a field. Village (4 to 12): children grow up, huts, a lumberjack, a shrine. Town
+(13 to 24): cottages, pens, an orchard, a granary, ponds, manors, 20 to 30 villagers. The plot of the monument is marked out early (from day 5,
+while there is still room). From day 21, with 28 villagers, the shaman saves his faith and raises it in five stages, one every 2 days at
+the earliest, for 1300, 2200, 3200, 4500 and 6500 faith; only needs above 59 on his list (hunger, housing, water, sickness) come before it, and
+his levelling of spare land pauses. The type is drawn from the seed: pyramid, stone circle, great tree, obelisk or temple.
+
+| Pyramid | Stone circle | Great tree |
+|---|---|---|
+| ![](docs/screenshots/monument-pyramid.png) | ![](docs/screenshots/monument-stone-circle.png) | ![](docs/screenshots/monument-great-tree.png) |
+
+| Obelisk | Temple | Stage 3 of 5 |
+|---|---|---|
+| ![](docs/screenshots/monument-obelisk.png) | ![](docs/screenshots/monument-temple.png) | ![](docs/screenshots/monument-midway.png) |
+
+**Worship day.** There is no end date. When stage 5 stands, the next day (from midnight) is the worship day: all villagers, weak or not,
+walk to the monument at dawn and stay until 20:00, the monument glows and the band reads WORSHIP DAY. After it the **summary** shows the world
+name, days, peak villagers, births, deaths and buildings built. It stays until the next morning's wake time (the clock's sleep schedule still
+darkens the screen at night), then a new world starts. If the village dies out the summary comes within minutes (THE VILLAGE IS GONE) and the new
+world starts the next morning. The summary ends when your sleep schedule next wakes the clock (the built-in 06:00 without a schedule). Without a
+valid clock it ends after about 12 hours of uptime.
+
+| Worship day | Summary | Extinction | A town on day 35 |
+|---|---|---|---|
+| ![](docs/screenshots/worship-day.png) | ![](docs/screenshots/summary.png) | ![](docs/screenshots/summary-extinct.png) | ![](docs/screenshots/town-day35.png) |
+
+**New worlds.** The seed comes from the clock's entropy, the game clock and a counter. The last 4 worlds are remembered (in the save) and a new
+world never has the same landform AND climate as the one before (`world_pick_hist` in `world.cpp`). The **Clock settings** page
+(`/config`, linked from the status page) has a **Start a new world** button with a confirmation (`POST /config/world`); the new world starts at once and
+is saved a few seconds later. The status page itself is part of the recovery layer and is not touched: see the PR for why the button lives on
+the settings page.
+
+**Growth and balance.** `python tools/balance_run.py` runs 100 whole worlds headless (the real core, weather simulated from the seed, 8 s of game
+time per minute) and fails unless no world ends before day 30, the median end is on day 30 to 45 and at most 3% die out (CI: `balance.yml`).
+Result of this release (seeds 1 to 100, 80 days at most):
+
+| | min | p10 | median | p90 | max |
+|---|---|---|---|---|---|
+| end day (worship day over) | 33 | 35 | 37 | 41 | 51 |
+| peak villagers | 36 | 42 | 48 | 48 | 48 |
+| day stage 1 is finished | 22 | 22 | 22 | 23 | 33 |
+| day stage 2 is finished | 24 | 24 | 24 | 26 | 35 |
+| day stage 3 is finished | 26 | 26 | 26 | 30 | 39 |
+| day stage 4 is finished | 28 | 29 | 31 | 35 | 44 |
+| day stage 5 is finished | 33 | 35 | 37 | 41 | 51 |
+| day the town has 20 villagers | 11 | 12 | 15 | 18 | 28 |
+| villagers on day 20 | 8 | 23 | 35 | 44 | 47 |
+| villagers on day 30 | 24 | 42 | 48 | 48 | 48 |
+
+Extinct worlds: 0 of 100. The r5 plateau (towns stuck at 4 to 8 villagers with no wood) came from lumberjacks that could not reach any
+tree: they now collect brushwood, saplings are planted 4 to 12 steps from the green when the forest near the village thins out, a couple's
+children keep the sexes balanced, a young couple settles every 3 days while there is a free bed and food (up to 36 villagers), and a lone
+couple forages berries when the stores run dry. Cottages and manors appear on their own from about day 12.
+
+**Animals and fish.** Each animal in a pen dies of old age with a 3% chance a day, and after two lean days (food under 2 days for everybody) one
+animal per pen and day starves. A pen with a herder and at least 3 days of food breeds one animal a day up to 10; a pen that lost its pair
+gets a wild pair every 5th day while things are good. Every water body (sea, lake, river, pond) has a stock of 12 fish plus 2 per water tile
+(at most 250); every catch takes one and the stock grows back by a tenth of its size each day, so a small pond is fished out quickly and
+recovers in a few days.
+
+**Debug commands** (`gq_types.h`, the browser preview's debug panel, `tools/shots.cpp`): `GQ_DBG_MONUMENT` (arg 0 to 5: the monument stands at that stage, laid
+out if needed, no faith asked), `GQ_DBG_PHASE` (1 worship day now, 3 summary, 4 extinct summary, 0 back to play), `GQ_DBG_EXTINCT` (every villager dies).
+`GQ_DBG_NEW_WORLD` and `GQ_DBG_SET_SEED` work as before.
+
+**Memory and size.** The game core grows by 136 bytes of static RAM (stats, fish stocks, 3 new counters); the firmware's save code uses
+fewer (the one 320-byte slot buffer, a 112-byte copy of the two settings records and a 36-byte scan table instead of 180). The monument art is
+192 new 16x16 cells (row-deduplicated into `assets_gen.h`). See the build report of the release for the firmware size (cap 470 KB).
+
 ## Hardware
 
 - GeekMagic SD Pro / SmallTV-style clock: ESP8266 (ESP-12, 4 MB flash) with a 240x240 ST7789
@@ -314,16 +383,21 @@ Every build contains, and CI refuses to produce a `.bin` without (`tools/check_b
 
 ## Saving to flash
 
-`firmware/store.cpp` keeps a ring log of 320-byte records (settings, weather and sleep settings, game)
-in 36 slots over the three sectors. Each record has a CRC and a sequence number; the newest valid
-one is loaded at boot, so a power cut in the middle of a write can never produce a half-saved state
-(tested with random power cuts, see `test/test_slotlog.cpp`). Writes are rare: settings 5 seconds
-after a change, the game every 20 minutes and at each new game day, at most 6 writes in 10 minutes;
-every write is read back and 3 failures switch saving off. Nothing is written in safe mode, while a
-firmware update runs, or when the image is larger than 0x7D000 bytes. After 2 or more crashes the
-saved game is kept aside, not loaded, so a game that crashes the clock cannot crash it again from
-the save. Updating to a new MiniGodus build keeps everything; flashing the stock firmware does not
-(not needed). The status page shows "Saved to flash ..." or "Loaded from flash ..." lines.
+`firmware/store.cpp` keeps a ring log of records in the three sectors 0x80000 to 0x82FFF. A record is 6 slots of 320 bytes
+(`lib/gamecore/src/reclog.h`): settings (48 bytes), weather and sleep settings (64), and the whole game (1688 bytes, in 6 parts: the
+head with the world, the statistics, the monument, the fish stocks and the seed history; then the villagers, the buildings and the map, 5 bits a
+tile). Every slot has its own CRC, the record's sequence number and a CRC over all 1800 bytes; a record is valid only when
+all 6 slots agree. The newest valid record is loaded at boot (the game is streamed into the core one slot at a time, so there is no 1.7 KB buffer),
+and a power cut in the middle of a write leaves an invalid record, so the previous complete one loads (tested with power cuts at every kind
+of point: `test/test_reclog.cpp` on the log, `test/test_store_sim.py` on the real store.cpp over a simulated flash). The erase only ever
+takes the sector that holds the two oldest records, never the newest one or the one before it. Each sector is erased once per 6 saves
+(about 12 times a day at a save every 20 minutes: 100 000 cycles last more than 20 years). Writes are rare: settings 5 seconds after a change,
+the game every 20 minutes, at each new game day and 5 seconds after a new world, at most 6 writes in 10 minutes; every slot is read back, the whole
+record is checked once more, and 3 failures switch saving off. Nothing is written in safe mode, while a firmware update runs, or when the image is
+larger than 0x7D000 bytes. After 2 or more crashes the saved game is kept aside, not loaded, and the settings are still saved with the old game
+carried over unchanged, so a game that crashes the clock cannot crash it again from the save. An r5 record (one slot, version 4 game) is still
+read and upgraded by the first save. Updating to a new MiniGodus build keeps everything; flashing the stock firmware does not (not needed).
+The status page shows "Saved to flash ..." or "Loaded from flash ..." lines.
 
 **GeekQuest shares this flash area.** The clock's WiFi, weather and sleep settings are common to
 both firmwares, but the saved game has its own magic number in each: MiniGodus' is `MGOD`
@@ -353,11 +427,13 @@ for t in test/*.cpp; do
 done
 python3 tools/lint_safety.py && python3 tools/lint_safety.py --selftest
 python3 tools/check_bin_selftest.py
+for t in test/*.py; do python3 $t; done      # includes the store simulation (real store.cpp on a simulated flash) and the VERSION check
+python3 tools/balance_run.py                 # 100 simulated worlds, a few minutes
 ```
 
 Browser preview (clang with wasm32 and lld): `tools/build_preview.sh` writes `preview/dist/index.html`.
 The preview is the same game core as the clock, plus a debug panel that is not in the firmware:
-a seed picker (type a seed and press **Load seed** to see exactly that world), a **New world** button (random seed,
+a seed picker (type a seed and press **Load seed** to see exactly that world), a monument stage, worship day, summary and extinction panel, a **New world** button (random seed,
 never the same landform and climate as before), menus to force a landform or climate, live weather, sleep mode,
 WiFi state, jump to a day, and time scale.
 
@@ -375,7 +451,8 @@ firmware/        ESP8266 entry (main.cpp), ST7789 driver, recovery layer (safety
                  weather (wxnet.cpp), sleep schedule (nightmode.cpp), settings page (config.cpp), flash save (store.cpp)
 lib/gamecore/    portable game core (no heap, no libc), used by the firmware and the preview:
                  world.cpp (generator, autotiler), godus.cpp (scene, camera, shaman's walk and staff, top bar),
-                 village.cpp (villagers, buildings; shaman.inc.h is the shaman's brain: needs, site search, terraforming)
+                 village.cpp (villagers, buildings; shaman.inc.h is the shaman's brain: needs, site search, terraforming;
+                 nature.inc.h: forest, fish; savepack.inc.h: the village's share of the saved game), reclog.cpp (flash record log)
 lib/gqsafe/      pure decision code of the recovery layer (boot counters, WiFi ladder, upload checks)
 assets/src/      editable PNG sheets (terrain quarters, objects, shaman, icons, and the r1 sheets)
 tools/           asset converter, version stamp, .bin safety checks, source lint, CI guards

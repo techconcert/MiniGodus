@@ -3,6 +3,8 @@
 // The villagers, buildings and faith economy arrive in later releases; the interface to the firmware stays.
 // Rules for the core: no heap, no libc, no floating point.
 #include "village.h"
+#include "village_art_ids.h"
+#include "monument_art_ids.h"
 
 GqState G;
 uint8_t g_wframe;
@@ -25,6 +27,10 @@ static int      s_last_min = -1;
 static uint8_t  s_going_to_bed;
 static int8_t   s_force_l = -1, s_force_c = -1;
 static uint32_t s_next_seed = 0x2545F491u;
+static uint32_t s_sum_ms;                          // time on the summary screen (not saved)
+enum { SUM_NOCLOCK_MS = 12 * 3600 * 1000, SUM_MAX_MS = 36 * 3600 * 1000 };   // no valid clock: 12 h of uptime; a schedule that never sleeps: 36 h
+static uint8_t  s_ph_seen, s_sum_slept;          // the phase the screen was drawn for; the summary has seen the night
+static uint8_t  s_imp;                           // a saved game is being imported part by part
 // the four counters of the top bar, by icon id: faith, food, wood, population (village_stat numbers)
 static const uint8_t HUD_STAT[4] = {3, 1, 2, 0};
 
@@ -56,7 +62,9 @@ static int walk_beside(int tx, int ty) {
 static void pick_wander_target(void) {
   int cx = s_sh.x >> 4, cy = s_sh.y >> 4;
   for (int tries = 0; tries < 6; tries++) {
-    int x = bed_tx() + (int)(gc_rnd() % 19) - 9, y = bed_ty() + (int)(gc_rnd() % 19) - 9;     // he stays near his village
+    int bx = bed_tx(), by = bed_ty(), r = 19, mx, my;
+    if (village_phase() == PH_WORSHIP && village_mon_pos(&mx, &my)) { bx = mx + 1; by = my + 3; r = 7; }      // the worship day: he stands among his people
+    int x = bx + (int)(gc_rnd() % (uint32_t)r) - r / 2, y = by + (int)(gc_rnd() % (uint32_t)r) - r / 2;     // he stays near his village
     if (!world_walkable(x, y) || (x == cx && y == cy)) continue;
     walk_to(x, y);
     if (s_walking) return;
@@ -97,7 +105,7 @@ static void start_world(uint32_t seed, int landform, int climate, int fresh) {
   build_palettes();
   place_shaman();
   s_move_acc = s_water_acc = s_band_acc = s_hud_acc = 0;
-  g_wframe = 0; s_hud_alt = 0; s_band_cur = 0; s_last_min = -1;
+  g_wframe = 0; s_hud_alt = 0; s_band_cur = 0; s_last_min = -1; s_ph_seen = 0; s_sum_slept = 0;
   gc_mark_all_dirty();
 }
 
@@ -105,8 +113,8 @@ static void start_world(uint32_t seed, int landform, int climate, int fresh) {
 static void new_world(uint32_t seed, int exact) {
   if (!seed) seed = 1;
   int l, c;
-  int pl = G.s.hist_n ? G.s.hist_land[0] : -1, pc = G.s.hist_n ? G.s.hist_clim[0] : -1;
-  world_pick(seed, exact ? -1 : pl, exact ? -1 : pc, &l, &c);
+  if (exact) world_pick(seed, -1, -1, &l, &c);
+  else world_pick_hist(seed, G.s.hist_land, G.s.hist_clim, G.s.hist_n, &l, &c);      // both differ from the last world, and none of the last 4 pairs again
   if (s_force_l >= 0) l = s_force_l;
   if (s_force_c >= 0) c = s_force_c;
   for (int i = 3; i > 0; i--) { G.s.hist_seed[i] = G.s.hist_seed[i - 1]; G.s.hist_land[i] = G.s.hist_land[i - 1]; G.s.hist_clim[i] = G.s.hist_clim[i - 1]; }
@@ -172,8 +180,9 @@ void world_clock_changed(void) {
       if (mm == 0) world_new_day();
       village_minute(mm, night_at(mm));
     }
-  } else if (d > 2 && d < 720 && s_last_min + d >= 1440) {   // a forward jump over midnight is a new day; a jump back (time zone, NTP) is not
-    world_new_day();
+  } else if (d > 2 && d < 720) {
+    if (s_last_min + d >= 1440) world_new_day();   // a forward jump over midnight is a new day; a jump back (time zone, NTP) is not
+    village_arc(m);                                // the minutes are not played, but the end of the worship day and of a dying village still count
   }
   s_last_min = m;
   G.s.minute = (uint16_t)m;
@@ -236,9 +245,39 @@ static void begin_step(void) {
   s_moving = 1;
 }
 
+// A seed that has not been used before: the generator's state, the wall clock and the minutes played.
+static uint32_t fresh_seed(void) {
+  gc_rnd();
+  uint32_t seed = gc_rng_get() ^ s_next_seed ^ (G.s.epoch * 2654435761u) ^ (G.s.play_min * 40503u);
+  s_next_seed = s_next_seed * 1664525u + 1013904223u;
+  return seed ? seed : 1;
+}
+
+// The summary is on screen (the monument is finished and the worship day is over, or the village is extinct): it stays until the
+// morning after, when the clock wakes up; the sleep schedule still darkens the screen at night (the firmware does that).
+static void phase_tick(uint32_t dt) {
+  int ph = village_phase();
+  if (ph != s_ph_seen) {
+    s_ph_seen = (uint8_t)ph;
+    s_sum_slept = 0; s_sum_ms = 0;
+    g_dirty |= 0x7FFFu;
+    if (ph == PH_WORSHIP) { s_band_cur = 5; s_cam_free = 0; }
+    gq_touch();
+  }
+  if (ph >= PH_DONE) {
+    // The summary ends when the clock wakes up next: want_bed() follows the user's sleep schedule (mode 2 = asleep, 1 = schedule in use and
+    // awake) or the built-in night (mode 0, up at GC_NIGHT_END_MIN). Without a valid clock, or if it never sleeps, an uptime limit applies.
+    s_sum_ms += dt;
+    if (want_bed()) s_sum_slept = 1;
+    else if (s_sum_slept && g_clock_valid) new_world(fresh_seed(), 0);      // the morning after: a new, very different world
+    else if (s_sum_ms >= (g_clock_valid ? SUM_MAX_MS : SUM_NOCLOCK_MS)) new_world(fresh_seed(), 0);
+  }
+}
+
 void world_tick(uint32_t dt) {
   s_play_ms += dt;
   if (s_play_ms >= 60000) { s_play_ms -= 60000; G.s.play_min++; }
+  phase_tick(dt);
 
   // bed time and wake up
   int bed = want_bed();
@@ -350,7 +389,7 @@ void world_tick(uint32_t dt) {
   s_band_acc += dt;
   if (s_band_acc >= BAND_MS) {
     s_band_acc -= BAND_MS;
-    if (s_band_cur != 5 && shaman_label()) s_band_cur = 5;        // the project every other time
+    if (s_band_cur != 5 && (shaman_label() || village_phase() == PH_WORSHIP)) s_band_cur = 5;        // the project (or the worship day) every other time
     else {
       for (int i = 0; i < 5; i++) {
         s_band_base = (s_band_base + 1) % 5;
@@ -483,6 +522,7 @@ static void draw_band(uint16_t* out, int y0) {
     buf[p] = 0;
   } else if (s_band_cur == 5) {
     const char* l = shaman_label();
+    if (!l && village_phase() == PH_WORSHIP) l = "WORSHIP DAY";
     str_copy(buf, l ? l : "", 32);
   } else {
     str_copy(buf, g_status[s_band_cur], 32);
@@ -494,8 +534,57 @@ static void draw_band(uint16_t* out, int y0) {
   draw_text(out, y0, x, y0 + (scale == 2 ? 1 : 4), buf, g_ui[P_WHITE], scale, 0);
 }
 
+// The summary screen (a whole 240x240 picture): world name, days, peak population, births, deaths, buildings built.
+static void draw_value_row(uint16_t* out, int y0, int y, const char* label, int v) {
+  char nb[6];
+  int len = put_num(nb, v);
+  draw_text(out, y0, 14, y, label, g_ui[P_WHITE], 2, 0);
+  draw_text(out, y0, GC_W - 14 - len * 12, y, nb, g_ui[P_YELLOW], 2, 0);
+}
+
+static void draw_summary(int s, uint16_t* out) {
+  int y0 = s * GC_STRIP_H;
+  fill_rect(out, y0, 0, y0, GC_W, GC_STRIP_H, g_ui[P_OUTLINE]);
+  const uint16_t gold = g_ui[P_YELLOW];
+  fill_rect(out, y0, 3, 3, GC_W - 6, 1, gold); fill_rect(out, y0, 3, GC_H - 4, GC_W - 6, 1, gold);
+  fill_rect(out, y0, 3, 3, 1, GC_H - 6, gold); fill_rect(out, y0, GC_W - 4, 3, 1, GC_H - 6, gold);
+  int ext = village_phase() == PH_EXTINCT;
+  const char* t1 = ext ? "THE VILLAGE IS GONE" : "THE MONUMENT STANDS";
+  draw_text(out, y0, (GC_W - str_len(t1) * 12) / 2, 10, t1, gold, 2, 0);
+  const char* nm = g_world.name;
+  draw_text(out, y0, (GC_W - str_len(nm) * 12) / 2, 30, nm, g_ui[P_WHITE], 2, 0);
+  // the monument as it stood, 48x48
+  int mx, my;
+  if (village_mon_pos(&mx, &my)) {
+    int st = village_mon_stage(), mt = village_mon_type();
+    for (int j = 0; j < 3; j++) {
+      int py = 52 + j * GC_TILE;
+      if (py + GC_TILE <= y0 || py >= y0 + GC_STRIP_H) continue;
+      for (int i = 0; i < 3; i++) {
+        gc_cell c = st == 0 ? GC_VILLAGE(VA_SITE) : (st == 1 ? GC_MONUMENT(MA_STAGE1 + j * 3 + i) : GC_MONUMENT(MA_BASE + (mt * 4 + st - 2) * 9 + j * 3 + i));
+        blit_sprite(out, y0, 96 + i * GC_TILE, py, c, 0, 0, g_wpal);
+      }
+    }
+  }
+  else {                                                     // no monument stands: a cairn of three stones where it would have been
+    const uint16_t gr = g_ui[P_GREY], wh = g_ui[P_WHITE], ol = g_ui[P_OUTLINE];
+    fill_rect(out, y0, 88, 96, 64, 2, gr);
+    fill_rect(out, y0, 104, 82, 32, 14, gr);  fill_rect(out, y0, 104, 82, 32, 1, wh); fill_rect(out, y0, 119, 82, 2, 14, ol);
+    fill_rect(out, y0, 111, 70, 18, 12, wh);  fill_rect(out, y0, 111, 81, 18, 1, ol);
+    fill_rect(out, y0, 116, 60, 8, 10, gr);   fill_rect(out, y0, 116, 69, 8, 1, ol);
+  }
+  draw_value_row(out, y0, 108, "DAYS", G.s.day + 1);
+  draw_value_row(out, y0, 128, "PEAK VILLAGERS", village_stat(253));
+  draw_value_row(out, y0, 148, "BIRTHS", village_stat(12));
+  draw_value_row(out, y0, 168, "DEATHS", village_stat(11));
+  draw_value_row(out, y0, 188, "BUILT", village_stat(254));
+  const char* t2 = "A NEW WORLD AT DAWN";
+  draw_text(out, y0, (GC_W - str_len(t2) * 6) / 2, 218, t2, g_ui[P_GREY], 1, 0);
+}
+
 void world_render(int s, uint16_t* out) {
   int y0 = s * GC_STRIP_H;
+  if (s_ph_seen >= PH_DONE) { draw_summary(s, out); return; }
   if (s == 0) { draw_top(out, y0); return; }
   if (s == BAND_STRIP) { draw_band(out, y0); return; }
   int wx0 = s_cam_x, wy0 = s_cam_y + y0 - GC_STRIP_H;
@@ -572,27 +661,93 @@ extern "C" void gc_set_live_weather(int wx, int temp_c10, int flags) {
 }
 
 // ------------------------------------------------------------------- save, query, debug
-extern "C" int gc_save_export(uint8_t* buf, int cap) {
-  if (gc_scene_id() != GC_SCENE_VILLAGE || !buf || cap < GC_SAVE_BYTES) return 0;
+extern "C" int gc_save_part_size(int part) { return part == 0 ? GC_SAVE_PART0 : (part > 0 && part < GC_SAVE_PARTS ? GC_SAVE_PARTN : 0); }
+
+extern "C" void gc_save_begin(void) {
+  if (gc_scene_id() != GC_SCENE_VILLAGE) return;
   G.s.rng = gc_rng_get();
-  village_pack(G.s.reserved);
   G.s.seq++;
-  G.s.crc32 = gq_save_crc((const uint8_t*)&G.s + 12, GQ_SAVE_SIZE - 12);
-  const uint8_t* p = (const uint8_t*)&G.s;
-  for (int i = 0; i < GQ_SAVE_SIZE; i++) buf[i] = p[i];
-  return GC_SAVE_BYTES;
+}
+
+extern "C" int gc_save_export_part(int part, uint8_t* buf, int cap) {
+  int n = gc_save_part_size(part);
+  if (gc_scene_id() != GC_SCENE_VILLAGE || !buf || !n || cap < n) return 0;
+  for (int i = 0; i < n; i++) buf[i] = 0;
+  if (part == 0) {
+    GqSave h = G.s;
+    h.version = GQ_SAVE_VERSION; h.size = GQ_SAVE_HEAD; h.crc32 = 0;
+    const uint8_t* p = (const uint8_t*)&h;
+    for (int i = 0; i < 64; i++) buf[i] = p[i];
+    village_pack_head(buf + 64);
+    uint32_t c = gq_save_crc(buf + 12, GQ_SAVE_HEAD - 12);
+    for (int i = 0; i < 4; i++) buf[8 + i] = (uint8_t)(c >> (8 * i));
+    return n;
+  }
+  return village_pack_part(part, buf, cap) ? n : 0;
+}
+
+extern "C" int gc_save_import_part(int part, const uint8_t* buf, int len) {
+  int n = gc_save_part_size(part);
+  if (gc_scene_id() != GC_SCENE_VILLAGE || !buf || !n || len != n) return 0;
+  if (part == 0) {
+    if (gq_save_validate(buf, len) != GC_SAVE_OK) return 0;
+    uint8_t* p = (uint8_t*)&G.s;
+    for (int i = 0; i < 64; i++) p[i] = buf[i];
+    for (int i = 64; i < (int)sizeof(G.s); i++) p[i] = 0;
+    gq_save_sanitize(&G.s);
+    s_play_ms = 0;
+    start_world(G.s.seed, G.s.landform, G.s.climate, 0);
+    village_unpack_head(buf + 64);
+    s_imp = 1;
+    return 1;
+  }
+  if (!s_imp) return 0;
+  village_unpack_part(part, buf);
+  return 1;
+}
+
+extern "C" void gc_save_import_end(void) {
+  if (!s_imp) return;
+  s_imp = 0;
+  village_unpack_end();
+  gc_rng_set(G.s.rng);
+  s_ph_seen = (uint8_t)village_phase();
+  s_sum_slept = 0;
+  gc_mark_all_dirty();
+}
+
+extern "C" int gc_save_export(uint8_t* buf, int cap) {
+  if (gc_scene_id() != GC_SCENE_VILLAGE || !buf || cap < GC_SAVE_TOTAL) return 0;
+  gc_save_begin();
+  int at = 0;
+  for (int k = 0; k < GC_SAVE_PARTS; k++) {
+    int n = gc_save_export_part(k, buf + at, cap - at);
+    if (!n) return 0;
+    at += n;
+  }
+  return at;
 }
 
 extern "C" int gc_save_import(const uint8_t* buf, int len) {
-  if (gc_scene_id() != GC_SCENE_VILLAGE) return 0;
-  if (gq_save_validate(buf, len) != GC_SAVE_OK) return 0;
-  uint8_t* p = (uint8_t*)&G.s;
-  for (int i = 0; i < GQ_SAVE_SIZE; i++) p[i] = buf[i];
-  gq_save_sanitize(&G.s);
-  s_play_ms = 0;
-  start_world(G.s.seed, G.s.landform, G.s.climate, 0);
-  village_unpack(G.s.reserved);
-  gc_rng_set(G.s.rng);
+  if (gc_scene_id() != GC_SCENE_VILLAGE || !buf) return 0;
+  if (len == GC_SAVE_BYTES) {                       // an r4 or r5 saved game: the village is in the reserved bytes
+    if (gq_save_validate(buf, len) != GC_SAVE_OK) return 0;
+    uint8_t* p = (uint8_t*)&G.s;
+    for (int i = 0; i < GQ_SAVE_SIZE; i++) p[i] = buf[i];
+    gq_save_sanitize(&G.s);
+    s_play_ms = 0;
+    start_world(G.s.seed, G.s.landform, G.s.climate, 0);
+    village_unpack(G.s.reserved);
+    for (int i = 0; i < (int)sizeof(G.s.reserved); i++) G.s.reserved[i] = 0;
+    gc_rng_set(G.s.rng);
+    s_ph_seen = (uint8_t)village_phase(); s_sum_slept = 0;
+    G.serial++;
+    return 1;
+  }
+  if (len != GC_SAVE_TOTAL || !gc_save_import_part(0, buf, GC_SAVE_PART0)) return 0;
+  int at = GC_SAVE_PART0;
+  for (int k = 1; k < GC_SAVE_PARTS; k++, at += GC_SAVE_PARTN) gc_save_import_part(k, buf + at, GC_SAVE_PARTN);
+  gc_save_import_end();
   return 1;
 }
 
@@ -605,7 +760,7 @@ extern "C" void gc_reset_game(void) {
 
 extern "C" void gc_new_world(uint32_t seed) {
   if (gc_scene_id() != GC_SCENE_VILLAGE) return;
-  new_world(seed, 0);
+  new_world(seed ? seed : fresh_seed(), 0);
 }
 
 extern "C" int gc_world_name(char* buf, int cap) {
@@ -637,6 +792,9 @@ int32_t world_query(int key) {
     case GQ_Q_START_AREA: return world_flood_area(g_world.start_x, g_world.start_y);     // uses the shared g_dist: the shaman recomputes it per step
     case GQ_Q_MAP_HASH: return (int32_t)world_map_hash();
     case GQ_Q_TEMP10: return world_temp10();
+    case GQ_Q_PHASE: return village_stat(250);
+    case GQ_Q_MON_STAGE: return village_stat(251);
+    case GQ_Q_MON_TYPE: return village_stat(252);
     case GQ_Q_HERO_ON_LAND: return world_walkable((s_sh.x + 8) >> 4, (s_sh.y + 8) >> 4) ? 1 : 0;
     default: return key >= GQ_Q_VILLAGE ? village_stat(key - GQ_Q_VILLAGE) : 0;
   }
@@ -665,6 +823,9 @@ void world_debug(int cmd, int32_t arg) {
   else if (cmd == GQ_DBG_SICK) village_debug(5, arg);
   else if (cmd == GQ_DBG_AGE) village_debug(6, arg);
   else if (cmd == GQ_DBG_FLASH) weather_flash();
+  else if (cmd == GQ_DBG_MONUMENT) village_debug(7, arg);
+  else if (cmd == GQ_DBG_PHASE) village_debug(8, arg);
+  else if (cmd == GQ_DBG_EXTINCT) village_debug(9, 0);
   else if (cmd == GQ_DBG_SET_SEED) new_world((uint32_t)arg, 1);
   else if (cmd == GQ_DBG_FORCE_LAND) s_force_l = (int8_t)(arg >= 0 && arg < LF_COUNT ? arg : -1);
   else if (cmd == GQ_DBG_FORCE_CLIM) s_force_c = (int8_t)(arg >= 0 && arg < CL_COUNT ? arg : -1);

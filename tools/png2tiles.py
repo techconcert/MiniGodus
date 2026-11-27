@@ -30,6 +30,7 @@ SHEETS = [
     ("shaman.png", "SHAMAN"),
     ("village.png", "VILLAGE", WORLD_RGB_TO_INDEX),
     ("villagers.png", "VILLAGERS"),
+    ("monument.png", "MONUMENT", WORLD_RGB_TO_INDEX),
 ]
 
 

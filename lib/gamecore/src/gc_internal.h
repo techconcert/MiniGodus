@@ -66,6 +66,6 @@ void world_new_day(void);
 
 // ---- save.cpp ----
 uint32_t gq_save_crc(const uint8_t* p, int n);
-int  gq_save_validate(const uint8_t* buf, int len);      // GC_SAVE_*
+int  gq_save_validate(const uint8_t* buf, int len);      // GC_SAVE_*: a version 4 block (GQ_SAVE_SIZE) or part 0 of version 5 (GQ_SAVE_HEAD)
 void gq_save_sanitize(GqSave* s);
 void gq_touch(void);

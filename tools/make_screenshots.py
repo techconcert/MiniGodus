@@ -1,6 +1,6 @@
 """Builds tools/shots.cpp with the real game core and writes the README screenshots to docs/screenshots/.
 
-    python tools/make_screenshots.py            # needs g++ and Pillow
+    python tools/make_screenshots.py            # needs g++ and Pillow (add --r6 for the r6 pictures only)
 Each landform gets an overview of the whole 512x512 map (the camera moved over it) and the 240x240 screen of the clock.
 """
 import os
@@ -35,6 +35,25 @@ R5_SHOTS = [
 ]
 
 
+MON_TYPES = ["pyramid", "stone-circle", "great-tree", "obelisk", "temple"]
+
+
+def mon_type(seed):
+    """Same hash as village_mon_type() in village.cpp: the monument type of a world."""
+    h = (seed * 0x9E3779B1) & 0xFFFFFFFF
+    h ^= h >> 15
+    h = (h * 0x85EBCA6B) & 0xFFFFFFFF
+    h ^= h >> 13
+    return (h >> 4) % 5
+
+
+def seed_for_type(t, first=1):
+    seed = first
+    while mon_type(seed) != t:
+        seed += 1
+    return seed
+
+
 def build():
     srcs = [os.path.join(ROOT, "lib", "gamecore", "src", f) for f in sorted(os.listdir(os.path.join(ROOT, "lib", "gamecore", "src"))) if f.endswith(".cpp")]
     subprocess.check_call(["g++", "-std=c++17", "-O2", "-o", EXE, os.path.join(ROOT, "tools", "shots.cpp")] + srcs)
@@ -51,9 +70,26 @@ def shot(mode, path, seed, lf, cl, ticks=0, scale=1, minutes=0, extra="", boost=
     os.remove(ppm)
 
 
+def r6_shots():
+    # r6: every monument type at its last stage, a monument half way, the worship day, the two summaries and a town on day 35.
+    # (-1 -1: landform and climate come from the seed.) Tokens are explained at the top of tools/shots.cpp.
+    for t in range(5):
+        shot("screen", os.path.join(OUT, f"monument-{MON_TYPES[t]}.png"), seed_for_type(t, 3), -1, -1, 0, 2, 1440 + 360, "", 0, "pop=10,mon=5,Fm,settle=5")
+    shot("screen", os.path.join(OUT, "monument-midway.png"), seed_for_type(1, 3), -1, -1, 0, 2, 1440 + 360, "", 0, "pop=10,mon=3,Fm,settle=5")
+    shot("screen", os.path.join(OUT, "worship-day.png"), seed_for_type(4, 3), -1, -1, 0, 2, 1440 + 360, "", 0, "pop=14,mon=5,phase=1,Fm,settle=90")
+    shot("screen", os.path.join(OUT, "summary.png"), seed_for_type(2, 3), -1, -1, 0, 2, 3 * 1440 + 360, "", 0, "mon=5,phase=3,settle=1")
+    shot("screen", os.path.join(OUT, "summary-extinct.png"), seed_for_type(0, 3), -1, -1, 0, 2, 1440 + 360, "", 0, "extinct,settle=8")
+    shot("screen", os.path.join(OUT, "town-day35.png"), 11, 0, 0, 0, 2, 34 * 1440 + 300, "town")
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     build()
+    if "--r6" in sys.argv:             # only the r6 pictures
+        r6_shots()
+        os.remove(EXE)
+        print("wrote the r6 pictures to", OUT)
+        return
     for lf, cl, seed in GALLERY:
         name = f"{LANDFORMS[lf]}-{CLIMATES[cl]}"
         shot("map", os.path.join(OUT, f"map-{name}.png"), seed, lf, cl)
@@ -83,6 +119,7 @@ def main():
     # r5: weather (the tokens are explained at the top of tools/shots.cpp), sickness and wood. minutes = day * 1440 + minutes since 06:00
     for name, seed, lf, cl, minutes, mode, boost, tokens in R5_SHOTS:
         shot("screen", os.path.join(OUT, name + ".png"), seed, lf, cl, 0, 2, minutes, mode, boost, tokens)
+    r6_shots()
     os.remove(EXE)
     print("wrote", OUT)
 

@@ -11,7 +11,9 @@
 //   lead=<minutes>  (default 240)   pop=<N>  add N villagers at the start   flash  a lightning flash in the picture
 //   shadow  let the cloud shadows drift until one is over the picture
 //   sick  one sick villager from the start of the lead   wood0  the village is always out of wood
-//   F<c>  put the camera over: i infirmary, l lumberjack, c water carrier, b homes, v the village, h the high land, s saplings
+//   F<c>  put the camera over: i infirmary, l lumberjack, c water carrier, b homes, v the village, h the high land, s saplings, m the monument
+// r6 tokens: mon=<0..5>  the monument stands at that stage (debug)   phase=<0..4>  force the arc phase (1 worship day, 3 summary, 4 extinct summary)
+//   extinct  everybody dies   settle=<minutes>  run on that long after the debug commands (the villagers walk to the monument)
 // Mode 'i' runs on until a sick villager stands at the finished infirmary, mode 'l' until a lumberjack has felled a tree and a sapling stands.
 // landform 0..5 or -1 and climate 0..3 or -1 mean "from the seed".
 #include <cstdio>
@@ -30,7 +32,7 @@ static void rgb(uint16_t c, unsigned char* o) {
 
 static int vq(int n) { return (int)gc_query(GQ_Q_VILLAGE + n); }
 
-struct Tok { int w = -1, t = 9999, lead = 240, pop = 0; bool flash = false, sick = false, wood0 = false, shadow = false; char focus = 0; };
+struct Tok { int w = -1, t = 9999, lead = 240, pop = 0, mon = -1, phase = -1, settle = 0; bool extinct = false; bool flash = false, sick = false, wood0 = false, shadow = false; char focus = 0; };
 static Tok parse(const char* s) {
   Tok k;
   std::string str = s ? s : "";
@@ -41,6 +43,10 @@ static Tok parse(const char* s) {
     std::string t = str.substr(i, j - i);
     if (t.rfind("lead=", 0) == 0) k.lead = std::atoi(t.c_str() + 5);
     else if (t.rfind("pop=", 0) == 0) k.pop = std::atoi(t.c_str() + 4);
+    else if (t.rfind("mon=", 0) == 0) k.mon = std::atoi(t.c_str() + 4);
+    else if (t.rfind("phase=", 0) == 0) k.phase = std::atoi(t.c_str() + 6);
+    else if (t.rfind("settle=", 0) == 0) k.settle = std::atoi(t.c_str() + 7);
+    else if (t == "extinct") k.extinct = true;
     else if (t == "flash") k.flash = true;
     else if (t == "sick") k.sick = true;
     else if (t == "wood0") k.wood0 = true;
@@ -81,6 +87,9 @@ static void focus(char c) {
     }
   } else if (c == 's') {
     for (int k = 0; k < 24; k++) { int v = vq(211 + k); if (v >= 0) { ax += v & 255; ay += (v >> 8) & 255; n++; } }
+  } else if (c == 'm') {
+    int mx = 0, my = 0;
+    if (village_mon_pos(&mx, &my)) { ax = mx + 1; ay = my + 1; n = 1; }
   } else if (c == 'h') {
     for (int i = 0; i < WM * WM; i++) if (MT_H(g_map[i]) >= 5 && MT_H(g_map[i]) <= 6) { ax += i % WM; ay += i / WM; n++; }
   }
@@ -164,6 +173,13 @@ int main(int argc, char** argv) {
       }
       if (mode[0] == 'c') gc_tick(120);
       gc_debug(GQ_DBG_BAND, 5);
+    }
+    if (tk.mon >= 0) gc_debug(GQ_DBG_MONUMENT, tk.mon);
+    if (tk.phase >= 0) gc_debug(GQ_DBG_PHASE, tk.phase);
+    if (tk.extinct) gc_debug(GQ_DBG_EXTINCT, 0);
+    for (int m = 0; m < tk.settle; m++) {
+      wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1);
+      for (int i = 0; i < 8; i++) gc_tick(500);
     }
     if (tk.focus) focus(tk.focus);
     if (tk.shadow) {          // let the clouds drift until one is over the middle of the picture

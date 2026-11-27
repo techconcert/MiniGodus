@@ -1,0 +1,19 @@
+name: balance
+
+# Release r6: 100 simulated worlds, headless, with the real game core. A separate workflow, so it runs beside the build and does not
+# lengthen it (about 3 minutes on the 4 cores of a runner).
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  balance:
+    name: Balancing over 100 seeds
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Balance tool builds and its targets hold
+        run: python3 tools/balance_run.py 100 1 80

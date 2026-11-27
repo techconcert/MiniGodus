@@ -108,7 +108,8 @@ def test_png2tiles():
         check(outs[0] == committed, "assets_gen.h is stale: run python tools/png2tiles.py")
         check(outs[0].count("GC_WPAL") >= 2 and "GC_QUARTS_CELLS" in outs[0], "world tables are generated")
         # art budget: r1 carried 37.7 KB; r2 added about 10 KB; r3 the village, villager and tool sheets (about 4 KB); r4 the buildings
-        # up to 48x48, pen, orchard, construction and cast frames (about 6 KB). The sum below counts declarations and definitions.
+        # up to 48x48, pen, orchard, construction and cast frames (about 6 KB); r6 the monument, 5 types x 5 stages of 3x3 cells (105 distinct cells
+        # and 674 new rows: about 9 KB). The sum below counts declarations and definitions, so it is twice the bytes in flash.
         size = 0
         for m in re.finditer(r"const (?:uint8_t|uint16_t) (GC_\w+)\[([\d\]\[]+)\]", outs[0]):
             dims = [int(x) for x in re.findall(r"\d+", m.group(2))]
@@ -116,7 +117,7 @@ def test_png2tiles():
             for x in dims:
                 n *= x
             size += n * (2 if "uint16_t" in m.group(0) else 1)
-        check(size < 66 * 1024, f"art tables are {size} bytes, over the budget (40 KB art plus the carried-over sheets)")
+        check(size < 84 * 1024, f"art tables are {size} bytes (declarations and definitions), over the budget (about 41 KB in flash)")
 
 
 if __name__ == "__main__":

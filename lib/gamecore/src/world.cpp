@@ -50,11 +50,26 @@ void world_pick(uint32_t seed, int prev_l, int prev_c, int* landform, int* clima
   for (int i = 0; i < 64; i++) {
     uint32_t h = hash32(s ^ 0x6d2b79f5U);
     int l = (int)(h % LF_COUNT), c = (int)((h >> 8) % CL_COUNT);
-    if (prev_l < 0 || l != prev_l || c != prev_c) { *landform = l; *climate = c; return; }
+    if (prev_l < 0 || (l != prev_l && c != prev_c)) { *landform = l; *climate = c; return; }      // r6: both differ, a very different world
     s = h + 0x9e3779b9U;
   }
-  *landform = prev_l;
+  *landform = (prev_l + 1) % LF_COUNT;
   *climate = (prev_c + 1) % CL_COUNT;
+}
+
+// The next world after a history of n worlds (newest first): landform and climate both differ from the newest, and the pair has not
+// been seen in the last n worlds.
+void world_pick_hist(uint32_t seed, const uint8_t* hl, const uint8_t* hc, int n, int* landform, int* climate) {
+  uint32_t s = seed;
+  for (int i = 0; i < 96; i++) {
+    uint32_t h = hash32(s ^ 0x6d2b79f5U);
+    int l = (int)(h % LF_COUNT), c = (int)((h >> 8) % CL_COUNT), ok = 1;
+    if (n > 0 && (l == hl[0] || c == hc[0])) ok = 0;
+    for (int k = 0; k < n; k++) if (l == hl[k] && c == hc[k]) ok = 0;
+    if (ok) { *landform = l; *climate = c; return; }
+    s = h + 0x9e3779b9U;
+  }
+  world_pick(seed, n > 0 ? hl[0] : -1, n > 0 ? hc[0] : -1, landform, climate);
 }
 
 // ------------------------------------------------------------------------------------------------ elevation per landform
