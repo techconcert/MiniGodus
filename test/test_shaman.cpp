@@ -265,7 +265,7 @@ static void test_purposeful() {
   std::printf("labels seen: %d\n", (int)labels.size());
   CHECK(wander * 100 <= awake * 15);
   CHECK(longest <= 60);
-  CHECK(aborts <= 6 * 9);                                        // r7: 7.6 per world over 60 worlds, r8: 4.4; six worlds vary from 3 to 7 per world
+  CHECK(aborts <= 6 * 7);                                        // under r7 (7.6 per world over 60 worlds, 39 on these six), above r8's 40 on these six (4.4 per world over 60)
   CHECK(labels.size() >= 8);
 }
 
