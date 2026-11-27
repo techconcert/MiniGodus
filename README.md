@@ -32,20 +32,20 @@ GeekQuestAI that fetch that game's newest build and install it through the same 
 
 ## What you see
 
-The top bar shows two resources on the left (faith and population, then food and wood, alternating every 3.5 seconds), the weather icon and
-temperature, and the clock at the right edge with a gap of two character widths in front of it (the gap only shrinks, to about 13 pixels,
-when 4-digit faith, 48 villagers and a three-character temperature leave no more room). The bottom band rotates through the status lines, the
-day and the world's name, and always says what the shaman is doing.
+The top bar shows two resources on the left (faith and population, then food and wood, alternating every 3.5 seconds), the weather icon and the
+temperature (no unit; the settings page says Celsius or Fahrenheit), and the clock at the right edge with a gap of two character widths (24 px) in front of it.
+The gap holds for any positive temperature, even with 4-digit faith and 48 villagers; only a three-character temperature such as -10 beside the widest left pair
+makes it shrink, to what is free (15 px). The bottom band rotates through the status lines, the day and the world's name, and always says what the shaman is doing.
 
 | Faith and population | Food and wood |
 |---|---|
 | ![](docs/screenshots/topbar-pair-a.png) | ![](docs/screenshots/topbar-pair-b.png) |
 
-The worst cases (the gap shrinks to what is free): 9999 faith, 48 villagers and -10 C; 999 food and 999 wood and -10 C; 999 faith, 48 villagers and 21 C.
+The widest cases: 9999 faith, 48 villagers, 35 degrees (full gap); 999 faith, 48 villagers, 21 degrees (full gap); 9999 faith, 48 villagers, -10 degrees (shrunk gap).
 
-![](docs/screenshots/topbar-worst-case.png)
-![](docs/screenshots/topbar-worst-case-b.png)
+![](docs/screenshots/topbar-9999-48-35.png)
 ![](docs/screenshots/topbar-999-48-21.png)
+![](docs/screenshots/topbar-worst-case.png)
 
 ## The world
 
@@ -222,7 +222,7 @@ The **Clock settings** page also has a **Start a new world** button.
 
 ## Memory and cost
 
-The game core and firmware use about 46.5 KB of static RAM (46152 bytes in r7, about 0.4 KB more in r8; CI prints the exact figure) (the 1 KB distance buffer shared by every search, the 1 KB map, villagers, buildings, weather, the shaman's 100 bytes), no heap, no libc, no floating
+The game core and firmware use about 46.5 KB of static RAM (CI prints the exact figure; the 1 KB distance buffer shared by every search, the 1 KB map, villagers, buildings, weather, the shaman's 100 bytes), no heap, no libc, no floating
 point. The whole game is saved to flash (1688 bytes in 6 parts, every villager, building, the map with felled trees and saplings, the monument and the statistics). The firmware size is
 reported by CI with every build (the cap is 470 KB for the game; the stock updater needs the image under 500 KB).
 
@@ -305,8 +305,7 @@ takes the sector that holds the two oldest records, never the newest one or the 
 the game every 20 minutes, at each new game day and 5 seconds after a new world, at most 6 writes in 10 minutes; every slot is read back, the whole
 record is checked once more, and 3 failures switch saving off. Nothing is written in safe mode, while a firmware update runs, or when the image is
 larger than 0x7D000 bytes. After 2 or more crashes the saved game is kept aside, not loaded, and the settings are still saved with the old game
-carried over unchanged, so a game that crashes the clock cannot crash it again from the save. An r5 record (one slot, version 4 game) is still
-read and upgraded by the first save. Updating to a new MiniGodus build keeps everything; flashing the stock firmware does not (not needed).
+carried over unchanged, so a game that crashes the clock cannot crash it again from the save. Updating to a new MiniGodus build keeps everything; flashing the stock firmware does not (not needed).
 The status page shows "Saved to flash ..." or "Loaded from flash ..." lines.
 
 **GeekQuest shares this flash area.** The clock's WiFi, weather and sleep settings are common to
@@ -348,11 +347,11 @@ never the same landform and climate as before), menus to force a landform or cli
 WiFi state, jump to a day, and time scale.
 
 Art: tiles and sprites are `assets/src/*.png` on a 16x16 grid with the 16-colour palette in
-`tools/palette.py`. After editing run `python tools/png2tiles.py`. The r2 world art is made by
+`tools/palette.py`. After editing run `python tools/png2tiles.py`. The world art is made by
 `python tools/make_world_art.py` (terrain quarters painted with roles, trees and boulders, the shaman, the top bar icons),
 which you can also edit by hand afterwards; the climate palettes are in `tools/palette.py` too. The README pictures come
 from `python tools/make_screenshots.py` (it builds `tools/shots.cpp`, a host renderer that uses the real game core).
-Python tests: `python3 test/test_art_tools.py`. The r4 building sprites (`village.png`, ids in `village_art_ids.h`) are drawn by the same script.
+Python tests: `python3 test/test_art_tools.py`. The building sprites (`village.png`, ids in `village_art_ids.h`) are drawn by the same script.
 
 ## Repository layout
 
@@ -364,7 +363,7 @@ lib/gamecore/    portable game core (no heap, no libc), used by the firmware and
                  village.cpp (villagers, buildings; shaman.inc.h is the shaman's brain: needs, site search, terraforming;
                  nature.inc.h: forest, fish; savepack.inc.h: the village's share of the saved game), reclog.cpp (flash record log)
 lib/gqsafe/      pure decision code of the recovery layer (boot counters, WiFi ladder, upload checks)
-assets/src/      editable PNG sheets (terrain quarters, objects, shaman, icons, and the r1 sheets)
+assets/src/      editable PNG sheets (terrain quarters, objects, shaman, icons)
 tools/           asset converter, version stamp, .bin safety checks, source lint, CI guards
 firmware/config_page.h  source of the /config page; the firmware serves the gzip copy in config_page_gz.h (run tools/gen_config_gz.py after editing it, CI verifies)
 docs/            design (DESIGN.md), the owner's recovery guide, screenshots/

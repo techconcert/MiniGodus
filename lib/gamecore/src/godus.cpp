@@ -87,7 +87,11 @@ static void idle_next(void) {
   for (int tries = 0; tries < 5; tries++) {
     s_spot_k = (uint8_t)((s_spot_k + 1) % 5);
     int x, y, ok;
-    if (s_spot_k < 4) ok = village_spot(s_spot_k, &x, &y) && walk_beside(x, y);
+    if (s_spot_k < 4) {                                   // only places the village can walk to: he never goes where he could be cut off from the green
+      ok = village_spot(s_spot_k, &x, &y);
+      if (ok) { world_flow(bed_tx(), bed_ty()); ok = g_dist[y * WM + x] != 255 || g_dist[(y + 1) * WM + x] != 255 || g_dist[y * WM + x + 1] != 255 || g_dist[(y > 0 ? y - 1 : 0) * WM + x] != 255 || g_dist[y * WM + (x > 0 ? x - 1 : 0)] != 255; }
+      ok = ok && walk_beside(x, y);
+    }
     else { walk_to(bed_tx(), bed_ty()); ok = 1; }
     if (!ok) continue;
     if (s_walking) { s_spot_going = 1; s_pause = 0; }
@@ -127,6 +131,7 @@ static void place_shaman(void) {
   s_sh.x = (int16_t)(bed_tx() * GC_TILE); s_sh.y = (int16_t)(bed_ty() * GC_TILE);
   s_sh.dir = DIR_DOWN; s_sh.step = s_sh.moved = 0;
   s_sh.act = GQ_ACT_WANDER; s_sh.abed = 0;
+  s_spot_k = 0; s_spot_going = s_spot_at = 0; s_idle_ph = 0; s_idle_acc = 0; s_band_n = 0;
   s_moving = s_walking = 0; s_pause = 1000; s_going_to_bed = 0; s_work = 0; s_cast = 0; s_goal_adj = 0;
   s_cam_free = 0;
   s_cam_x = cam_clamp_x(s_sh.x + 8 - CAM_W / 2);
@@ -140,9 +145,9 @@ static void reset_state(int keep_world) {
   if (!keep_world) {
     G.s.hist_n = 0; G.s.landform = G.s.climate = 0;
     for (int i = 0; i < 4; i++) { G.s.hist_seed[i] = 0; G.s.hist_land[i] = G.s.hist_clim[i] = 0; }
+    G.s.pad0 = 0;                                     // r8: a reset of the same world keeps the robe
   }
   for (int i = 0; i < (int)sizeof(G.s.reserved); i++) G.s.reserved[i] = 0;
-  G.s.pad0 = 0;
   G.serial++;
   s_play_ms = 0;
 }
@@ -387,9 +392,11 @@ void world_tick(uint32_t dt) {
             s_sh.x = (int16_t)(ox * GC_TILE); s_sh.y = (int16_t)(oy * GC_TILE); s_walking = 0; s_work = 0; g_dirty |= MAP_STRIPS;
           }
         }
-        if (shaman_stuck()) {                       // walled in (a pocket no ramp can open): back to the green, the one jump he makes
-          world_audit_jump(9);
-          s_sh.x = (int16_t)(bed_tx() * GC_TILE); s_sh.y = (int16_t)(bed_ty() * GC_TILE); s_walking = 0; s_work = 0; g_dirty |= MAP_STRIPS;
+        if (shaman_stuck()) {                       // walled in (a pocket no ramp can open): onto the nearest tile connected to the green (r8; the green itself if there is none)
+          int tx = s_sh.x >> 4, ty = s_sh.y >> 4, ox, oy;
+          if (!world_nearest_connected(tx, ty, bed_tx(), bed_ty(), &ox, &oy)) { ox = bed_tx(); oy = bed_ty(); }
+          world_audit_jump((tx > ox ? tx - ox : ox - tx) + (ty > oy ? ty - oy : oy - ty));
+          s_sh.x = (int16_t)(ox * GC_TILE); s_sh.y = (int16_t)(oy * GC_TILE); s_walking = 0; s_work = 0; g_dirty |= MAP_STRIPS;
         }
         if (s_going_to_bed) {
           int tx = s_sh.x >> 4, ty = s_sh.y >> 4;
@@ -422,8 +429,10 @@ void world_tick(uint32_t dt) {
               // maybe he is shut in a pocket the village cannot reach: he steps back to his bed and tries again
               world_flow(bed_tx(), bed_ty());
               if (g_dist[(s_sh.y >> 4) * WM + (s_sh.x >> 4)] == 255) {
-                world_audit_jump(9);
-                s_sh.x = (int16_t)(bed_tx() * GC_TILE); s_sh.y = (int16_t)(bed_ty() * GC_TILE); s_walking = 0; g_dirty |= MAP_STRIPS;
+                int px = s_sh.x >> 4, py = s_sh.y >> 4, ox, oy;
+                if (!world_nearest_connected(px, py, bed_tx(), bed_ty(), &ox, &oy)) { ox = bed_tx(); oy = bed_ty(); }
+                world_audit_jump((px > ox ? px - ox : ox - px) + (py > oy ? py - oy : oy - py));
+                s_sh.x = (int16_t)(ox * GC_TILE); s_sh.y = (int16_t)(oy * GC_TILE); s_walking = 0; g_dirty |= MAP_STRIPS;
               }
               if (!walk_beside(tx, ty)) { shaman_abort(); s_work = 0; s_pause = 400; }
             }
@@ -573,7 +582,7 @@ static void draw_top(uint16_t* out, int y0) {
   char t[6] = {'-', '-', ':', '-', '-', 0};
   if (g_clock_valid) { fmt2(t, g_hour); fmt2(t + 3, g_min); }
   // r8: resources | weather icon + temperature | clock at the right edge, with two character widths (24 px) between temperature and clock.
-  // Only when the left pair is at its widest (9999 faith, 48 villagers) and the temperature has three characters does the gap shrink, to what is free.
+  // The temperature has no unit (the settings page says which one is shown). Only a three-character temperature (-10, 100) beside the widest left pair (9999 faith, 48 villagers) makes the gap shrink, to what is free.
   int deg, f;
   char tb[8];
   int len = 0;
@@ -583,13 +592,12 @@ static void draw_top(uint16_t* out, int y0) {
     if (a >= 100) tb[len++] = (char)('0' + a / 100);
     if (a >= 10) tb[len++] = (char)('0' + (a / 10) % 10);
     tb[len++] = (char)('0' + a % 10);
-    if (len < 3) tb[len++] = f ? 'F' : 'C';          // three characters (-10, 100) leave the unit out so that the clock keeps its room
   } else {
     tb[len++] = '-'; tb[len++] = '-';
   }
   tb[len] = 0;
   int cx0 = GC_W - 2 - 60;                             // the clock, right aligned
-  int gap = cx0 - len * 12 - 17 - left_end - 4;        // room between the pair and the icon (4 px stay free)
+  int gap = cx0 - len * 12 - 17 - left_end - 2;        // room between the pair and the icon (2 px stay free)
   gap = gap > 24 ? 24 : (gap < 0 ? 0 : gap);
   int tx = cx0 - gap - len * 12;
   draw_text(out, y0, tx, 1, tb, ink, 2, 0);

@@ -123,7 +123,7 @@ int main(int argc, char** argv) {
   bool map = argv[1][0] == 'm';
   uint32_t seed = (uint32_t)std::strtoul(argv[3], 0, 10);
   int lf = std::atoi(argv[4]), cl = std::atoi(argv[5]), ticks = argc > 6 ? std::atoi(argv[6]) : 0;
-  gc_init(GC_SCENE_VILLAGE, 1, 0);
+  gc_init(GC_SCENE_VILLAGE, std::getenv("SHOTS_INIT") ? (uint32_t)std::atoi(std::getenv("SHOTS_INIT")) : 1u, 0);      // (the first world: a world never wears its predecessor's robe)
   gc_set_depth(40);
   gc_debug(GQ_DBG_FORCE_LAND, lf);
   gc_debug(GQ_DBG_FORCE_CLIM, cl);

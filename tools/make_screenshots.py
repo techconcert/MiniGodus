@@ -109,22 +109,26 @@ def r8_shots():
     bar("topbar-pair-a.png", 4, "pop=20")
     bar("topbar-pair-b.png", 1, "pop=20")
     bar("topbar-worst-case.png", 4, "pop=46,w0,t-100,lead=60,faith=9999", 9999)             # 9999 faith, 48 villagers, -10 C
-    bar("topbar-worst-case-b.png", 1, "pop=46,w0,t-100,lead=60,food=999,wood=999", 9999)    # 999 food, 999 wood, -10 C
+    bar("topbar-9999-48-35.png", 4, "pop=46,w0,t350,lead=60,faith=9999", 9999)             # 9999 faith, 48 villagers, 35 C: the full gap
     bar("topbar-999-48-21.png", 4, "pop=46,w0,t210,lead=60,faith=999", 0)                  # 999 faith, 48 villagers, 21 C
     # the band: what the shaman is doing (mode L runs on until the band reads the label)
     for name, seed, lab in (("band-praying", 21, "PRAYING"), ("band-resting", 11, "RESTING"), ("band-walking-to-site", 21, "WALKING_TO_SITE"),
                             ("band-blessing-fields", 11, "BLESSING_FIELDS"), ("band-levelling", 11, "LEVELLING_LAND")):
         shot("screen", os.path.join(OUT, name + ".png"), seed, -1, -1, 0, 2, 4 * 1440 + 300, "L", 150, "lab=" + lab)
-    # the robe colours: seeds that give six different ones, the shaman in the middle of the picture
+    # the robe colours: all eight (seeds 6, 25, 7, 1, 11, 2, 8, 3 give them in palette order; red is the colour of the first world of the picture
+    # program, so that one is made from another first world)
     tiles = []
-    for seed in (1, 25, 7, 8, 3, 11):
+    for seed in (6, 25, 7, 1, 11, 2, 8, 3):
         _r = os.path.join(OUT, "_robe.png")
+        if seed == 1:
+            os.environ["SHOTS_INIT"] = "2"
         shot("screen", _r, seed, -1, -1, 0, 1, 1)
+        os.environ.pop("SHOTS_INIT", None)
         tiles.append(Image.open(_r).crop((84, 72, 156, 144)).resize((216, 216), Image.NEAREST))
         os.remove(_r)
-    sheet = Image.new("RGB", (216 * 3 + 8, 216 * 2 + 4), (30, 30, 30))
-    for k, t in enumerate(tiles):
-        sheet.paste(t, ((k % 3) * 220, (k // 3) * 220))
+    sheet = Image.new("RGB", (216 * 4 + 12, 216 * 2 + 4), (30, 30, 30))
+    for k, t_ in enumerate(tiles):
+        sheet.paste(t_, ((k % 4) * 220, (k // 4) * 220))
     sheet.save(os.path.join(OUT, "robes.png"))
 
 

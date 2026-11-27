@@ -141,11 +141,12 @@ static void bar_case(int faith, int food, int wood, int villagers, int temp10, i
   *gap_out = worst;
 }
 static void test_bar_fit() {
-  int g1 = 0, g2 = 0, g3 = 0;
-  bar_case(150, 50, 50, 10, 210, 24, &g1);              // a normal town, 21 C
-  bar_case(999, 999, 999, 46, 210, 6, &g2);             // 999 / 48 / 21 C
-  bar_case(9999, 999, 999, 46, -100, 6, &g3);           // the worst case: 9999 faith, 48 villagers, -10 C
-  std::printf("top bar gap: normal %d px, 999/48/21C %d px, 9999/48/-10C %d px\n", g1, g2, g3);
+  int g1 = 0, g2 = 0, g3 = 0, g4 = 0;
+  bar_case(150, 50, 50, 10, 210, 24, &g1);              // a normal town, 21
+  bar_case(999, 999, 999, 46, 210, 24, &g2);            // 999 / 48 / 21
+  bar_case(9999, 999, 999, 46, 350, 24, &g3);           // 9999 / 48 / 35 (the unit is left out: the full gap holds for any positive temperature up to 99)
+  bar_case(9999, 999, 999, 46, -100, 6, &g4);           // the worst case: 9999 faith, 48 villagers, -10
+  std::printf("top bar gap: normal %d px, 999/48/21 %d px, 9999/48/35 %d px, 9999/48/-10 %d px\n", g1, g2, g3, g4);
 }
 
 // r8: the shaman's robe changes with every new world, through the new world button path and through a seed, never twice in a row; it is saved

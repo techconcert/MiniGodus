@@ -566,6 +566,13 @@ static int next_access(int sx, int sy, int* tx, int* ty) {
 // Something the village cannot get to over the ramps it has: the shaman himself (shut in on a terrace), a building, the shore (when there
 // is no well), a tree (when wood runs low). Starts a project of ramps for the first of them; 0 when everything is reachable or nothing
 // can be done about it.
+// 1 and the tile of an idle villager who cannot walk to the green over the ramps there are (g_dist must hold the flow from the green)
+static int stranded_villager(int* x, int* y) {
+  for (int i = 0; i < MAXV; i++)
+    if (used(i) && vact(i) == A_IDLE && g_dist[V[i].y * WM + V[i].x] == 255 && world_walkable(V[i].x, V[i].y)) { *x = V[i].x; *y = V[i].y; return 1; }
+  return 0;
+}
+
 static int access_project(void) {
   int rx, ry, mode = -1, gx = 0, gy = 0, gw = 1, gh = 1, shore_ok = 0, tree_ok = 0, bad = -1, shx, shy, self_ok;
   world_shaman_tile(&shx, &shy);
@@ -583,6 +590,10 @@ static int access_project(void) {
   if (!self_ok) {
     if (find_ramp(AC_TILE, shx, shy, 1, 1, 1, &rx, &ry)) { mode = AC_TILE; gx = shx; gy = shy; }
     else s_stuck = 1;                                                // shut in by buildings and cliffs: no ramp helps, godus.cpp puts him back on the green
+  }
+  if (mode < 0) {                                                      // r8: an idle villager cut off from the green: ramps to his pocket
+    int sx_ = stranded_villager(&gx, &gy);
+    if (sx_ && find_ramp(AC_TILE, gx, gy, 1, 1, 1, &rx, &ry)) { mode = AC_TILE; gw = gh = 1; }
   }
   if (mode < 0 && bad >= 0) {
     int bw_, bh_;
