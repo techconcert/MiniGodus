@@ -42,13 +42,12 @@ jobs:
         run: |
           set -e
           shopt -s nullglob
-          for t in test/*.cpp; do
-            n=$(basename "$t" .cpp)
-            echo "=== $n"
-            g++ -std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror \
-              -o "$n" "$t" lib/gamecore/src/*.cpp lib/gqsafe/src/*.cpp
-            ./"$n"
-          done
+          # RECOVERY-CHANGE (r6): the libraries are compiled once, in parallel; every test then compiles only itself and the tests run side by side
+          # (a single sequential loop took 27 minutes before r6 and would have taken far longer with the new tests). Same flags as before.
+          export FLAGS="-std=c++17 -O1 -g -fsanitize=address,undefined -fno-sanitize-recover=all -Wall -Wextra -Werror"
+          mkdir -p /tmp/obj
+          ls lib/gamecore/src/*.cpp lib/gqsafe/src/*.cpp | xargs -P "$(nproc)" -I{} sh -c 'g++ $FLAGS -c {} -o /tmp/obj/$(echo {} | tr / _).o'
+          ls test/*.cpp | xargs -P "$(nproc)" -I{} sh -c 'n=$(basename {} .cpp); g++ $FLAGS -o /tmp/$n {} /tmp/obj/*.o && /tmp/$n > /tmp/$n.log 2>&1 || { echo "=== $n FAILED"; cat /tmp/$n.log; exit 1; }; echo "=== $n"; tail -n 2 /tmp/$n.log'
       - name: Build browser preview
         run: |
           # the runner image usually has clang and lld already; the package mirror is sometimes unreachable

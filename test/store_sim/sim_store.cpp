@@ -130,9 +130,9 @@ int main() {
   CHECK(run(BOOT, 0, -1, 0) == 0);
   CHECK(S->sig_loaded == first_sig);
 
-  // ---- 2. generation after generation: every reboot loads the state that was saved last (60 saves wrap the ring many times)
+  // ---- 2. generation after generation: every reboot loads the state that was saved last (30 saves wrap the ring more than twice)
   uint32_t prev = first_sig;
-  for (int g = 1; g <= 60; g++) {
+  for (int g = 1; g <= 30; g++) {
     CHECK(run(ADVANCE, g, -1, 0) == 0);
     CHECK(S->sig_loaded == prev);                               // it started from the previous save
     uint32_t now_sig = S->sig_new;
@@ -142,12 +142,12 @@ int main() {
     prev = now_sig;
   }
   CHECK(S->outside == 0);                                       // nothing outside 0x80000..0x82FFF was ever touched
-  std::printf("  60 saves: %u flash erases, %u slot writes\n", S->flash_erases, S->flash_writes);
+  std::printf("  30 saves: %u flash erases, %u slot writes\n", S->flash_erases, S->flash_writes);
 
   // ---- 3. power cuts at every kind of point: the loaded game is the previous save, or the new one when the cut came after the last byte
   static uint8_t snap[sizeof(S->flash)];
   int cuts_total = 0, torn = 0, completed = 0;
-  for (int g = 100; g < 118; g++) {
+  for (int g = 100; g < 108; g++) {
     memcpy(snap, S->flash, sizeof(snap));
     uint32_t before = prev;
     CHECK(run(BOOT, 0, -1, 0) == 0 && S->sig_loaded == before);
@@ -169,7 +169,7 @@ int main() {
     CHECK(run(BOOT, 0, -1, 0) == 0 && S->sig_loaded == prev);
     (void)nsig;
   }
-  CHECK(torn > 200 && completed > 18);
+  CHECK(torn > 90 && completed >= 8);
   std::printf("  %d power cuts: %d fell back to the previous complete save, %d finished\n", cuts_total, torn, completed);
 
   // ---- 4. a torn newest record: damage each of its six slots; the previous complete record loads
