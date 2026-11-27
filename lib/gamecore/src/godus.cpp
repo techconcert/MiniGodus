@@ -18,6 +18,8 @@ static int16_t  s_mx, s_my;                        // pixel target of the step i
 static uint8_t  s_moving, s_walking, s_goal_x, s_goal_y, s_goal_adj;
 static uint8_t  s_work, s_wtx, s_wty, s_applied, s_retry;       // the shaman's project: 1 walking beside the tile, 2 casting
 static int      s_cast, s_band_base;
+static uint8_t  s_band_n;
+static uint32_t s_label_h;                          // hash of the label last drawn: the band is redrawn when what he does changes
 enum { CAST_MS = 800 };
 static int      s_cam_x, s_cam_y, s_cam_free;     // camera (top left, world pixels)
 static uint32_t s_move_acc, s_water_acc, s_band_acc, s_hud_acc, s_pause, s_play_ms;
@@ -25,6 +27,7 @@ static uint8_t  s_hud_alt;
 static int      s_band_cur;                       // 0..3 status line, 4 = day line, 5 = the shaman's project
 static int      s_last_min = -1;
 static uint8_t  s_going_to_bed;
+static uint8_t  s_spot_k, s_spot_going, s_spot_at;      // r8: where he goes when there is nothing to build: 0 shrine, 1 monument, 2 fields, 3 homes, 4 the green
 static int8_t   s_force_l = -1, s_force_c = -1;
 static uint32_t s_next_seed = 0x2545F491u;
 static uint32_t s_sum_ms;                          // time on the summary screen (not saved)
@@ -70,6 +73,50 @@ static void pick_wander_target(void) {
     walk_to(x, y);
     if (s_walking) return;
   }
+}
+
+// r8: nothing to build: he walks to a place with a meaning (shrine, monument, fields, a home, the green) and stands there a while
+static uint32_t spot_stand(void) {
+  uint32_t r = gc_rnd();
+  return s_spot_k <= 1 ? 14000 + r % 16000 : (s_spot_k == 4 ? 20000 + r % 20000 : 8000 + r % 8000);
+}
+static void idle_next(void) {
+  s_spot_at = 0; s_spot_going = 0;
+  for (int tries = 0; tries < 5; tries++) {
+    s_spot_k = (uint8_t)((s_spot_k + 1) % 5);
+    int x, y, ok;
+    if (s_spot_k < 4) ok = village_spot(s_spot_k, &x, &y) && walk_beside(x, y);
+    else { walk_to(bed_tx(), bed_ty()); ok = 1; }
+    if (!ok) continue;
+    if (s_walking) { s_spot_going = 1; s_pause = 0; }
+    else { s_spot_at = 1; s_pause = spot_stand(); }
+    return;
+  }
+  s_spot_k = 4; s_spot_at = 1; s_pause = spot_stand();
+}
+
+// What the shaman is doing, for the bottom band: never empty
+const char* world_state_label(void) {
+  if (s_sh.act == GQ_ACT_SLEEP) return "SLEEPING";
+  if (s_going_to_bed) return "GOING TO BED";
+  const char* l = shaman_label();
+  if (l) {
+    if (s_work == 1 && s_walking && s_sh.act != GQ_ACT_CAST) {
+      int dx = (int)s_wtx - (s_sh.x >> 4), dy = (int)s_wty - (s_sh.y >> 4);
+      if ((dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy) >= 5 && !shaman_waiting()) return "WALKING TO SITE";
+    }
+    return l;
+  }
+  if (village_phase() == PH_WORSHIP) return "WORSHIP DAY";
+  if (s_spot_going && s_walking) {
+    static const char* const W[5] = {"WALKING TO SHRINE", "WALKING TO MONUMENT", "WALKING TO FIELDS", "WALKING TO HOMES", "WALKING HOME"};
+    return W[s_spot_k];
+  }
+  if (s_spot_at) {
+    static const char* const A[5] = {"PRAYING", "PRAYING", "BLESSING FIELDS", "VISITING VILLAGERS", "RESTING"};
+    return A[s_spot_k];
+  }
+  return "RESTING";
 }
 
 static void place_shaman(void) {
@@ -284,7 +331,7 @@ void world_tick(uint32_t dt) {
   // bed time and wake up
   int bed = want_bed();
   if (bed && s_sh.act != GQ_ACT_SLEEP && !s_going_to_bed) {
-    s_going_to_bed = 1;
+    s_going_to_bed = 1; s_spot_going = s_spot_at = 0;
     s_work = 0; if (s_sh.act == GQ_ACT_CAST) s_sh.act = GQ_ACT_WANDER;
     walk_to(bed_tx(), bed_ty());
   } else if (!bed && (s_sh.act == GQ_ACT_SLEEP || s_going_to_bed)) {
@@ -353,7 +400,7 @@ void world_tick(uint32_t dt) {
         {
           int tx, ty;
           if (shaman_target(s_sh.x >> 4, s_sh.y >> 4, &tx, &ty)) {
-            s_wtx = (uint8_t)tx; s_wty = (uint8_t)ty; s_retry = 0; s_work = 1;
+            s_wtx = (uint8_t)tx; s_wty = (uint8_t)ty; s_retry = 0; s_work = 1; s_spot_going = s_spot_at = 0;
             if (!walk_beside(tx, ty)) {
               // maybe he is shut in a pocket the village cannot reach: he steps back to his bed and tries again
               world_flow(bed_tx(), bed_ty());
@@ -366,8 +413,9 @@ void world_tick(uint32_t dt) {
             continue;
           }
         }
-        s_pause = 800 + gc_rnd() % 2500;
-        pick_wander_target();
+        if (village_phase() == PH_WORSHIP) { s_pause = 800 + gc_rnd() % 2500; pick_wander_target(); continue; }
+        if (s_spot_going) { s_spot_going = 0; s_spot_at = 1; s_pause = spot_stand(); continue; }      // arrived: he stands here a while
+        idle_next();
         continue;
       }
     }
@@ -395,10 +443,16 @@ void world_tick(uint32_t dt) {
   s_hud_acc += dt;
   if (s_hud_acc >= HUD_ALT_MS) { s_hud_acc -= HUD_ALT_MS; s_hud_alt = (uint8_t)((s_hud_alt + 1) & 1); g_dirty |= 1u; }
 
+  if (s_band_cur == 5) {                                  // the band follows what he does at once
+    const char* l = world_state_label();
+    uint32_t h = 2166136261u;
+    for (; *l; l++) h = (h ^ (uint8_t)*l) * 16777619u;
+    if (h != s_label_h) { s_label_h = h; g_dirty |= 1u << BAND_STRIP; }
+  }
   s_band_acc += dt;
   if (s_band_acc >= BAND_MS) {
     s_band_acc -= BAND_MS;
-    if (s_band_cur != 5 && (shaman_label() || village_phase() == PH_WORSHIP)) s_band_cur = 5;        // the project (or the worship day) every other time
+    if (s_band_cur != 5 || ++s_band_n % 2 == 0) s_band_cur = 5;        // what he is doing: two slots of every three
     else {
       for (int i = 0; i < 5; i++) {
         s_band_base = (s_band_base + 1) % 5;
@@ -539,9 +593,7 @@ static void draw_band(uint16_t* out, int y0) {
     for (int i = 0; g_world.name[i] && p < 38; i++) buf[p++] = g_world.name[i];
     buf[p] = 0;
   } else if (s_band_cur == 5) {
-    const char* l = shaman_label();
-    if (!l && village_phase() == PH_WORSHIP) l = "WORSHIP DAY";
-    str_copy(buf, l ? l : "", 32);
+    str_copy(buf, world_state_label(), 32);
   } else {
     str_copy(buf, g_status[s_band_cur], 32);
   }
@@ -818,7 +870,7 @@ int32_t world_query(int key) {
       if (s_going_to_bed) return GQ_SM_BED;
       if (s_sh.act == GQ_ACT_CAST) return GQ_SM_WORK;
       if (village_stat(19) != 0) return s_walking && s_work == 1 ? GQ_SM_TO_SITE : (shaman_waiting() ? GQ_SM_WAIT : GQ_SM_WORK);
-      return s_walking ? GQ_SM_WANDER : GQ_SM_IDLE;
+      return s_walking ? (s_spot_going ? GQ_SM_TO_SPOT : GQ_SM_WANDER) : GQ_SM_IDLE;
     case GQ_Q_HERO_ON_LAND: return world_walkable((s_sh.x + 8) >> 4, (s_sh.y + 8) >> 4) ? 1 : 0;
     default: return key >= GQ_Q_VILLAGE ? village_stat(key - GQ_Q_VILLAGE) : 0;
   }

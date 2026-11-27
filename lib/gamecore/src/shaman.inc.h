@@ -19,6 +19,7 @@ static Proj     P;
 static uint8_t  s_pers, s_waiting, s_ramping;
 enum { NFAIL = 12 };
 static uint8_t  s_fail[NFAIL][2], s_failn, s_pneed;
+static uint16_t s_turned;                                // sites turned down at planning (a statistic)
 static uint16_t s_aborts;                                // projects the shaman gave up (a statistic)                   // spots where a project failed
 static uint8_t  s_plot[3][2];                            // reserved flat 3x3 plots (x, 255 = none)
 static uint8_t  s_cool[N_COUNT], s_mend_cool, s_acc_cool, s_stuck;
@@ -34,7 +35,7 @@ static int iab(int v) { return v < 0 ? -v : v; }
 void shaman_reset(void) {
   P.kind = PK_NONE; s_waiting = s_ramping = s_has_op = 0; s_failn = 0; s_mend_cool = 0;
   for (int i = 0; i < NFAIL; i++) s_fail[i][0] = s_fail[i][1] = 255;
-  s_pneed = 0; s_aborts = 0;
+  s_pneed = 0; s_aborts = 0; s_turned = 0;
   for (int i = 0; i < 3; i++) s_plot[i][0] = s_plot[i][1] = 255;
   for (int i = 0; i < N_COUNT; i++) s_cool[i] = 0;
   s_acc_cool = 0; s_stuck = 0; s_spent = 0; s_casts = 0; s_ponds = s_plots = s_levels = 0; s_ld = 0; s_lx = s_ly = 255; s_skipn = 0;
@@ -698,7 +699,7 @@ int shaman_target(int sx, int sy, int* tx, int* ty) {
     else if (P.ops < MAX_OPS + 70 && P.kind != PK_NONE && P.kind != PK_ACCESS && next_ramp(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 1; }
     else if (P.ops < MAX_OPS + 110 && next_access(sx, sy, &x, &y)) { found = 1; s_ramping = 1; d = 3; }
     if (!found) {
-      if ((P.kind == PK_BUILD || P.kind == PK_POND) && P.wait <= WAIT_MAX && project_occupied()) { s_waiting = 1; return 0; }      // r7: a building is laid out when nobody stands on the plot
+      if ((P.kind == PK_BUILD || P.kind == PK_POND) && P.wait <= WAIT_MAX && project_occupied()) { s_waiting = 2; return 0; }      // r7: a building is laid out when nobody stands on the plot
       finish_project();
       return 0;
     }
@@ -785,10 +786,11 @@ static const char* const BNAME[B_COUNT] = {"TENT", "HUT", "COTTAGE", "MANOR", "F
 const char* shaman_label(void) {
   static char buf[28];
   if (P.kind == PK_NONE) return 0;
+  if (s_waiting && !s_has_op) return s_waiting == 2 ? "WAITING FOR BUILDERS" : "PRAYING FOR FAITH";
   if (P.kind == PK_ACCESS) return "CUTTING RAMPS";
   if (P.kind == PK_POND) return s_ramping ? "CUTTING RAMPS" : "DIGGING POND";
   if (P.kind == PK_PLOT) return s_ramping ? "CUTTING RAMPS" : "FLATTENING PLOT";
-  if (P.kind == PK_LEVEL) return s_ramping ? "CUTTING RAMPS" : "LEVELLING LAND";
+  if (P.kind == PK_LEVEL) return s_ramping ? "CUTTING RAMPS" : (P.hgt == 255 ? "CLEARING TREES" : "LEVELLING LAND");
   if (s_ramping) return "CUTTING RAMPS";
   if (P.kind == PK_STAGE) {
     static const char* const MN[5] = {"PYRAMID", "STONE CIRCLE", "GREAT TREE", "OBELISK", "TEMPLE"};
@@ -828,6 +830,20 @@ static int start_project(int k, int nolevel_unused) {
   P.tp = (uint8_t)(k < B_COUNT ? k : 0); P.var = c.var; P.x = c.x; P.y = c.y; P.w = (uint8_t)w; P.h = (uint8_t)h; P.hgt = c.H; P.ops = 0; P.wait = 0;
   s_has_op = 0; s_ramping = 0;
   for (int i = 0; i < NFAIL; i++) s_skip[i][0] = s_skip[i][1] = 255;
+  {   // r8: a plot that needs work but that he cannot stand beside (and no ramp would help) is turned down now, not after a walk and some faith
+    int needs = 0, sx, sy, x, y, d;
+    for (int j = 0; j < h; j++)
+      for (int i = 0; i < w; i++) {
+        uint8_t b = g_map[(P.y + j) * WM + P.x + i];
+        if ((MT_OBJ(b) && MT_H(b) >= 2) || (P.hgt != 255 && MT_H(b) != P.hgt)) needs = 1;
+      }
+    world_shaman_tile(&sx, &sy);
+    world_flow(sx, sy);
+    if (needs && !next_terra(sx, sy, &x, &y, &d) && !next_ramp(sx, sy, &x, &y, &d) && !next_access(sx, sy, &x, &y)) {
+      P.kind = PK_NONE; add_fail(c.x, c.y); s_turned++;
+      return 0;
+    }
+  }
   if (k < B_COUNT) s_wood = (uint16_t)(s_wood - cost_wood(k));
   return 1;
 }

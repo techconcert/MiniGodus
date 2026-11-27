@@ -36,6 +36,7 @@ void village_unpack_head(const uint8_t* p);
 int  village_phase(void);                                    // PH_*
 int  village_mon_stage(void);                                // 0 none or not started .. 5 finished
 int  village_mon_type(void);                                 // 0 pyramid, 1 stone circle, 2 great tree, 3 obelisk, 4 temple
+int  village_spot(int kind, int* x, int* y);                 // r8: top left tile of a shrine (0), the monument (1), a field (2) or a home (3), 0 if there is none
 int  village_mon_pos(int* x, int* y);                        // 1 and the top left tile of the monument
 void village_end_world(int phase);                           // debug: PH_WORSHIP now, PH_DONE or PH_EXTINCT
 void village_debug(int cmd, int32_t arg);
@@ -61,4 +62,5 @@ void weather_flash(void);                                        // a lightning 
 void world_cam(int* x, int* y);
 void world_shaman_tile(int* x, int* y);                          // the tile the shaman stands on
 int  world_temp10(void);                                         // tenths of a degree Celsius the rules use (15.0 when there is no reading)
+const char* world_state_label(void);                             // r8: what the shaman is doing, as the band shows it (never empty)
 int  world_has_reading(void);                                    // a live reading or a debug override

@@ -79,6 +79,19 @@ int village_phase(void) { return s_phase; }
 int village_mon_stage(void) { int b = mon_b(); return b < 0 ? 0 : B[b].st; }
 int village_mon_type(void) { uint32_t h = G.s.seed * 0x9E3779B1u; h ^= h >> 15; h *= 0x85EBCA6Bu; h ^= h >> 13; return (int)((h >> 4) % 5); }
 int village_mon_pos(int* x, int* y) { int b = mon_b(); if (b < 0) return 0; *x = B[b].x; *y = B[b].y; return 1; }
+// r8: places the shaman visits when he has nothing to build. kind 0 shrine, 1 monument, 2 a field or orchard, 3 a home. One of the finished ones, picked at random.
+int village_spot(int kind, int* x, int* y) {
+  int n = 0, pick = -1;
+  for (int b = 0; b < MAXB; b++) {
+    if (!bused(b) || (B[b].tp & SITE)) continue;
+    int t = btype(b);
+    int ok = kind == 0 ? t == B_SHRINE : (kind == 1 ? t == B_MONUMENT : (kind == 2 ? (t == B_FIELD || t == B_ORCHARD) : (t == B_HUT || t == B_COTTAGE || t == B_MANOR || t == B_TENT)));
+    if (ok && (int)(gc_rnd() % (uint32_t)(++n)) == 0) pick = b;
+  }
+  if (pick < 0) return 0;
+  *x = B[pick].x; *y = B[pick].y;
+  return 1;
+}
 static const uint8_t NVAR[B_COUNT] = {1, 1, 2, 1, 4, 2, 3, 4, 1, 1, 1, 1, 2, 1};
 static void bdim(int tp, int var, int* w, int* h) {
   int a = 1, b = 1;
@@ -838,6 +851,7 @@ int village_stat(int which) {
     case 262: return s_mon_day;
     case 263: return s_lean;
     case 248: return s_aborts;
+    case 247: return s_turned;
     case 31: return s_pers;
     case 32: return count_ramps();
     case 33: return s_ponds;
