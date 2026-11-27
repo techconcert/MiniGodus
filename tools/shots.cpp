@@ -6,16 +6,102 @@
 //   mode  town  the camera is put over the village green;  cast  run until the shaman raises his staff, band shows his project;
 //         pond  run until a pond is dug (shot just after, the camera follows the shaman)
 //   boost  faith added every simulated hour (a rich world, to see the shaman work early)
+// Extra argument 10 (r5), comma separated tokens:
+//   w<N>  force weather GQ_W_N for the last 'lead' minutes before the picture   t<N>  force the temperature (tenths of a degree)
+//   lead=<minutes>  (default 240)   pop=<N>  add N villagers at the start   flash  a lightning flash in the picture
+//   shadow  let the cloud shadows drift until one is over the picture
+//   sick  one sick villager from the start of the lead   wood0  the village is always out of wood
+//   F<c>  put the camera over: i infirmary, l lumberjack, c water carrier, b homes, v the village, h the high land, s saplings
+// Mode 'i' runs on until a sick villager stands at the finished infirmary, mode 'l' until a lumberjack has felled a tree and a sapling stands.
 // landform 0..5 or -1 and climate 0..3 or -1 mean "from the seed".
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
 #include "../lib/gamecore/src/gamecore.h"
 #include "../lib/gamecore/src/gq_types.h"
+#include "../lib/gamecore/src/village.h"
+#include <string>
+#include <cstring>
 
 static void rgb(uint16_t c, unsigned char* o) {
   int r = (c >> 11) & 31, g = (c >> 5) & 63, b = c & 31;
   o[0] = (unsigned char)((r << 3) | (r >> 2)); o[1] = (unsigned char)((g << 2) | (g >> 4)); o[2] = (unsigned char)((b << 3) | (b >> 2));
+}
+
+static int vq(int n) { return (int)gc_query(GQ_Q_VILLAGE + n); }
+
+struct Tok { int w = -1, t = 9999, lead = 240, pop = 0; bool flash = false, sick = false, wood0 = false, shadow = false; char focus = 0; };
+static Tok parse(const char* s) {
+  Tok k;
+  std::string str = s ? s : "";
+  size_t i = 0;
+  while (i < str.size()) {
+    size_t j = str.find(',', i);
+    if (j == std::string::npos) j = str.size();
+    std::string t = str.substr(i, j - i);
+    if (t.rfind("lead=", 0) == 0) k.lead = std::atoi(t.c_str() + 5);
+    else if (t.rfind("pop=", 0) == 0) k.pop = std::atoi(t.c_str() + 4);
+    else if (t == "flash") k.flash = true;
+    else if (t == "sick") k.sick = true;
+    else if (t == "wood0") k.wood0 = true;
+    else if (t == "shadow") k.shadow = true;
+    else if (t.size() >= 2 && t[0] == 'w') k.w = std::atoi(t.c_str() + 1);
+    else if (t.size() >= 2 && t[0] == 't') k.t = std::atoi(t.c_str() + 1);
+    else if (t.size() == 2 && t[0] == 'F') k.focus = t[1];
+    i = j + 1;
+  }
+  return k;
+}
+
+static void look_at(int tx, int ty) {
+  int x = tx * 16 - 112, y = ty * 16 - 96;
+  gc_debug(GQ_DBG_SET_CAM, (x < 0 ? 0 : (x > 272 ? 272 : x)) + 1024 * (y < 0 ? 0 : (y > 304 ? 304 : y)));
+}
+
+static void focus(char c) {
+  int sx = (int)gc_query(GQ_Q_START_X), sy = (int)gc_query(GQ_Q_START_Y);
+  long ax = 0, ay = 0, n = 0;
+  if (c == 'i' || c == 'b' || c == 'v') {
+    for (int b = 0; b < 40; b++) {
+      int v = vq(110 + b);
+      if (v < 0) continue;
+      int tp = (v >> 24) & 15;
+      if (c == 'i' && tp != B_INFIRM) continue;
+      if (c == 'b' && tp > B_MANOR) continue;
+      ax += (v & 255) + ((v >> 16) & 15) / 2; ay += ((v >> 8) & 255) + ((v >> 20) & 15) / 2; n++;
+    }
+  } else if (c == 'l' || c == 'c') {
+    for (int i = 0; i < 48; i++) {
+      int v = vq(60 + i);
+      if (v < 0) continue;
+      int role = (v >> 20) & 15;
+      if ((c == 'l' && role != R_LUMBER) || (c == 'c' && role != R_CARRIER)) continue;
+      ax += v & 255; ay += (v >> 8) & 255; n++;
+      break;
+    }
+  } else if (c == 's') {
+    for (int k = 0; k < 24; k++) { int v = vq(211 + k); if (v >= 0) { ax += v & 255; ay += (v >> 8) & 255; n++; } }
+  } else if (c == 'h') {
+    for (int i = 0; i < WM * WM; i++) if (MT_H(g_map[i]) >= 5 && MT_H(g_map[i]) <= 6) { ax += i % WM; ay += i / WM; n++; }
+  }
+  if (n) look_at((int)(ax / n), (int)(ay / n)); else look_at(sx, sy);
+}
+
+static int sick_adult(void) {
+  for (int i = 0; i < 48; i++) { int v = vq(60 + i); if (v >= 0 && ((v >> 28) & 3) == AGE_ADULT && !((v >> 27) & 1)) return i; }
+  return -1;
+}
+static bool sick_at_infirmary(void) {
+  int bx = -1, by = -1;
+  for (int b = 0; b < 40; b++) { int v = vq(110 + b); if (v >= 0 && ((v >> 24) & 15) == B_INFIRM && !((v >> 28) & 1)) { bx = v & 255; by = (v >> 8) & 255; } }
+  if (bx < 0) return false;
+  for (int i = 0; i < 48; i++) {
+    int v = vq(60 + i);
+    if (v < 0 || !((v >> 27) & 1) || ((v >> 16) & 7) != A_WORK) continue;
+    int x = v & 255, y = (v >> 8) & 255;
+    if (x >= bx - 1 && x <= bx + 3 && y >= by - 1 && y <= by + 3) return true;
+  }
+  return false;
 }
 
 int main(int argc, char** argv) {
@@ -34,12 +120,39 @@ int main(int argc, char** argv) {
   gc_set_clock(10, 24, 1);
   gc_set_live_weather(GQ_W_CLEAR, 214, 0);
   gc_set_status(0, "IP 192.168.1.50");
+  Tok tk = parse(argc > 10 ? argv[10] : "");
+  if (tk.pop) gc_debug(GQ_DBG_ADD_VILLAGERS, tk.pop);
   if (minutes > 0) {
     int wall = 6 * 60;
+    bool sky = mode[0] == 'i' || mode[0] == 'l';
     for (int m = 0; m < minutes; m++) {
+      if (m == minutes - tk.lead) {
+        if (tk.w >= 0) gc_debug(GQ_DBG_WEATHER, tk.w);
+        if (tk.t != 9999) gc_debug(GQ_DBG_TEMP, tk.t);
+      }
       wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1);
       for (int i = 0; i < 8; i++) gc_tick(500);
       if (boost && m % 60 == 0) gc_debug(GQ_DBG_FAITH, (int)gc_query(GQ_Q_VILLAGE + 3) + boost);
+      if (tk.wood0 && m % 60 == 0) gc_debug(GQ_DBG_WOOD, 0);
+      if (tk.sick && m >= minutes - tk.lead && m % 120 == 0) { int k = sick_adult(); if (k >= 0 && vq(36) == 0) gc_debug(GQ_DBG_SICK, k); }
+    }
+    (void)sky;
+    if (mode[0] == 'i' || mode[0] == 'l') {          // run on until the picture is there
+      for (int m = 0; m < 8 * 1440; m++) {
+        if (mode[0] == 'i' && sick_at_infirmary()) break;
+        if (mode[0] == 'l' && vq(206) >= 3 && vq(205) >= 2) {
+          bool at = false;
+          for (int i = 0; i < 48; i++) { int v = vq(60 + i); if (v >= 0 && ((v >> 20) & 15) == R_LUMBER && ((v >> 16) & 7) == A_WORK) at = true; }
+          if (at) break;
+        }
+        wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1);
+        for (int i = 0; i < 8; i++) gc_tick(500);
+        if (m % 60 == 0) {
+          gc_debug(GQ_DBG_FAITH, (int)gc_query(GQ_Q_VILLAGE + 3) + (boost ? boost : 100));
+          if (mode[0] == 'i') { gc_debug(GQ_DBG_WOOD, 200); int k = sick_adult(); if (k >= 0 && vq(36) == 0) gc_debug(GQ_DBG_SICK, k); }      // one patient at a time
+          else gc_debug(GQ_DBG_WOOD, 0);
+        }
+      }
     }
     if (mode[0] == 'c' || mode[0] == 'p') {          // run on until the picture is there
       for (int m = 0; m < 6 * 1440; m++) {
@@ -52,6 +165,19 @@ int main(int argc, char** argv) {
       if (mode[0] == 'c') gc_tick(120);
       gc_debug(GQ_DBG_BAND, 5);
     }
+    if (tk.focus) focus(tk.focus);
+    if (tk.shadow) {          // let the clouds drift until one is over the middle of the picture
+      for (int i = 0; i < 4000; i++) {
+        int cam_x = (int)gc_query(GQ_Q_CAM_X), cam_y = (int)gc_query(GQ_Q_CAM_Y), hit = 0;
+        for (int k = 0; k < 4; k++) {
+          int dx = vq(240 + k) - cam_x - 120, dy = vq(244 + k) - cam_y - 120;
+          if (dx > -30 && dx < 30 && dy > -20 && dy < 20) hit = 1;
+        }
+        if (hit) break;
+        gc_tick(250);
+      }
+    }
+    if (tk.flash) { gc_debug(GQ_DBG_FLASH, 0); gc_tick(1); }
     if (mode[0] == 't') {
       // the window of 15 x 13 tiles (between the bars) that shows the most buildings whole, nearest to the green
       int bx[40], by[40], bw[40], bh[40], nb = 0;

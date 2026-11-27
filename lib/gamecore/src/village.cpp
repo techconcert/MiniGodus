@@ -1,4 +1,4 @@
-// The villagers of MiniGodus (release r3) and the shaman who builds for them (r4). See village.h.
+// The villagers of MiniGodus (release r3), the shaman who builds for them (r4), and weather, sickness and wood (r5). See village.h.
 //
 // Time is the real clock: village_minute() is called once for every minute that passes, so meals happen at 07:30,
 // 12:30 and 19:00 and everybody sleeps in the clock's sleep schedule. Walking is real time: village_tick() moves the
@@ -21,7 +21,12 @@ static Vil      V[MAXV];
 static Bld      B[MAXB];
 static uint8_t  s_home[MAXV];                    // building index of each villager's bed, 255 = none
 static uint16_t s_food, s_wood, s_faith, s_deaths, s_births;
-static uint8_t  s_sick;                                // somebody has been weak (r5: sick): an infirmary is wanted
+static uint8_t  s_sick;                                // somebody has fallen sick in this world: an infirmary is wanted
+static uint8_t  s_ill[MAXV];                           // r5: bit 7 sick, bits 5-6 days sick, bit 4 a cold night without fire, bits 0-3 exposure points today
+static uint16_t s_sick_deaths, s_onsets, s_felled;
+static uint32_t s_crop_u, s_crop_n, s_thirst_n, s_burned;      // counters for the tests: crop growth units and chances, thirst steps, wood burnt
+static uint8_t  s_hot, s_cold, s_rainy, s_storm, s_snowing, s_fog_now, s_cond, s_prev_night, s_night_now;   // today's conditions, from the weather
+static uint8_t  s_fire[(MAXB + 7) / 8];                // homes with a fire lit tonight (chimney smoke)
 static uint8_t  s_src, s_content, s_roles_dirty;      // food sources today (bits: grain, fruit, animal, fish), content today, roles need a refresh
 static uint8_t  s_water, s_vanim, s_rr, s_woke, s_last_plan;
 static uint32_t s_vacc, s_anim_acc, s_rng, s_earned;
@@ -36,6 +41,9 @@ static void set_act(int i, int a) { V[i].ra = (uint8_t)((V[i].ra & 0x8F) | (a <<
 static int cool(int i) { return ((V[i].fl >> 5) & 1) | ((V[i].ra >> 7) << 1); }
 static void set_cool(int i, int c) { V[i].fl = (uint8_t)((V[i].fl & ~32) | ((c & 1) << 5)); V[i].ra = (uint8_t)((V[i].ra & 0x7F) | ((c >> 1) << 7)); }
 static int vcls(int i) { return V[i].fl & F_AGE; }
+static int sick(int i) { return (s_ill[i] & 0x80) != 0; }
+static int sick_days(int i) { return (s_ill[i] >> 5) & 3; }
+static int fire_at(int b) { return (s_fire[b >> 3] >> (b & 7)) & 1; }
 static int hunger(int i) { return V[i].nd & 7; }
 static int thirst(int i) { return V[i].nd >> 3; }
 static void set_hunger(int i, int h) { V[i].nd = (uint8_t)((V[i].nd & 0xF8) | (h > 7 ? 7 : h)); }
@@ -126,6 +134,14 @@ static void rebuild_homes(void) {
     if (--cap[b] == 0) b++;
   }
 }
+static int occupied_homes(void) {          // homes with somebody's bed in them
+  int n = 0;
+  for (int b = 0; b < MAXB; b++) {
+    if (!bused(b) || (B[b].tp & SITE) || !is_home(btype(b))) continue;
+    for (int i = 0; i < MAXV; i++) if (used(i) && s_home[i] == b) { n++; break; }
+  }
+  return n;
+}
 static int capacity(void) { int n = 0; for (int b = 0; b < MAXB; b++) if (bused(b) && !(B[b].tp & SITE)) n += cap_of(btype(b)); return n; }
 
 // ---------------------------------------------------------------- walking targets
@@ -160,6 +176,7 @@ static void flow_key(int key) {
 }
 
 static int job_key(int i) {
+  if (sick(i)) { int b = nth_bld(B_INFIRM, 0); return b < 0 ? 0 : b + 1; }          // the sick go to the infirmary, if there is one
   switch (vrole(i)) {
     case R_FARMER: { int b = nth_crop(rank_of(i)); return b < 0 ? 0 : b + 1; }
     case R_HERDER: { int b = nth_bld(B_PEN, rank_of(i)); return b < 0 ? 0 : b + 1; }
@@ -182,12 +199,14 @@ static int key_of(int i) {
   }
 }
 
+static void kill(int i);
 #include "shaman.inc.h"
+#include "nature.inc.h"
 
 // ---------------------------------------------------------------- roles
 static void assign_roles(void) {
-  int p = pop(), weak = 0, adults = 0;
-  for (int i = 0; i < MAXV; i++) if (used(i)) { if (V[i].fl & F_WEAK) weak++; if (vcls(i) == AGE_ADULT) adults++; }
+  int p = pop(), weak = 0, adults = 0, ill = 0;
+  for (int i = 0; i < MAXV; i++) if (used(i)) { if (V[i].fl & F_WEAK) weak++; if (sick(i)) ill++; if (vcls(i) == AGE_ADULT) adults++; }
   int food_low = s_food < p * 6;
   int want[R_COUNT];
   for (int r = 0; r < R_COUNT; r++) want[r] = 0;
@@ -197,19 +216,32 @@ static void assign_roles(void) {
   want[R_HERDER] = count_done(B_PEN);
   want[R_FISHER] = count_done(B_FISH);
   want[R_LUMBER] = s_wood < 8 && adults >= 5 ? 2 : (s_wood < 24 ? 1 : 0);
-  want[R_CARRIER] = p >= 4 ? 1 : 0;
-  want[R_HEALER] = (weak > 0 || p >= 12) ? 1 : 0;
+  int firewood = s_cold && s_wood < (uint16_t)(occupied_homes() * 4 + 20);      // cold: the lumberjacks come first
+  if (firewood) { int w = 1 + (adults >= 6) + (adults >= 14); if (w > want[R_LUMBER]) want[R_LUMBER] = w; }
+  want[R_CARRIER] = p >= 4 ? 1 + (s_hot && p >= 6) + (s_hot && p >= 14) : 0;      // heat: thirst doubles, more carriers
+  want[R_HEALER] = (ill > 0 || weak > 0 || (p >= 12 && count_done(B_INFIRM))) ? 1 + (ill >= 4) : 0;
   static const uint8_t ORDER_FOOD[7] = {R_FARMER, R_HERDER, R_FISHER, R_BUILDER, R_LUMBER, R_CARRIER, R_HEALER};
   static const uint8_t ORDER_OK[7] = {R_BUILDER, R_FARMER, R_HERDER, R_FISHER, R_LUMBER, R_CARRIER, R_HEALER};
-  const uint8_t* order = food_low ? ORDER_FOOD : ORDER_OK;
+  static const uint8_t ORDER_COLD[7] = {R_LUMBER, R_BUILDER, R_FARMER, R_HERDER, R_FISHER, R_CARRIER, R_HEALER};
+  const uint8_t* order = food_low ? ORDER_FOOD : (firewood ? ORDER_COLD : ORDER_OK);
+  uint8_t ord[7];
+  for (int k = 0; k < 7; k++) ord[k] = order[k];
+  if (ill > 0 && count_done(B_INFIRM)) {            // the sick are waiting: the healer is hired first
+    int at = 0;
+    while (at < 6 && ord[at] != R_HEALER) at++;
+    for (; at > 0; at--) ord[at] = ord[at - 1];
+    ord[0] = R_HEALER;
+  }
+  order = ord;
   uint8_t taken[MAXV];
   for (int i = 0; i < MAXV; i++) taken[i] = 0;
   for (int i = 0; i < MAXV; i++) {
     if (!used(i)) continue;
     if (vcls(i) == AGE_CHILD) { set_role(i, R_CHILD); taken[i] = 1; }
     else if (vcls(i) == AGE_ELDER) { set_role(i, R_ELDER); taken[i] = 1; }
-    else if (V[i].fl & F_WEAK) { set_role(i, R_IDLE); taken[i] = 1; }
+    else if ((V[i].fl & F_WEAK) || sick(i)) { set_role(i, R_IDLE); taken[i] = 1; }
   }
+  for (int i = 0; i < MAXV; i++) if (used(i) && sick(i) && vcls(i) != AGE_ADULT) taken[i] = 1;
   int rot = (int)(vr() % MAXV);
   for (int k = 0; k < 7; k++) {
     int r = order[k];
@@ -236,6 +268,7 @@ static int add_villager(int age_class, int female, int age_days, int x, int y) {
     V[i].fl = (uint8_t)(F_USED | age_class | (female ? F_FEM : 0) | ((vr() & 3) << 6));
     V[i].age = (uint8_t)((age_days & 31) | ((vr() & 7) << 5));
     V[i].nd = 0;
+    s_ill[i] = 0;
     V[i].ra = (uint8_t)(age_class == AGE_CHILD ? R_CHILD : R_IDLE);
     return i;
   }
@@ -243,7 +276,7 @@ static int add_villager(int age_class, int female, int age_days, int x, int y) {
 }
 
 static void kill(int i) {
-  V[i].fl = 0;
+  V[i].fl = 0; s_ill[i] = 0;
   s_deaths++;
   mark_tile(V[i].x, V[i].y);
 }
@@ -287,31 +320,18 @@ void village_new_day(int night) {
       int n = B[b].st;
       if (n >= 2 && n < 10 && s_food >= (uint16_t)(pop() * 3) && herders) B[b].st = (uint8_t)(n + 1);
     }
-  // the forest regrows: a few saplings a day, on free land away from the village green
-  int trees = 0;
-  for (int i = 0; i < WM * WM; i++) if (MT_OBJ(g_map[i]) == OB_TREE) trees++;
-  for (int k = 0; k < 4 && trees < 60; k++) {
-    int x = (int)(vr() % WM), y = (int)(vr() % WM);
-    uint8_t b = g_map[y * WM + x];
-    int dx = x - cx(), dy = y - cy();
-    if (MT_H(b) < 3 || MT_H(b) > 5 || MT_OBJ(b) != OB_NONE || MT_SOIL(b) == SOIL_BUILT || dx * dx + dy * dy < 9) continue;
-    world_flow(cx(), cy());
-    int base = count_reach(), fr = g_dist[y * WM + x] != 255 ? 1 : 0;
-    g_map[y * WM + x] = (uint8_t)((b & 0x3F) | (OB_TREE << 6));
-    world_flow(cx(), cy());
-    if (count_reach() != base - fr) { g_map[y * WM + x] = b; continue; }      // a sapling never closes a path
-    trees++;
-    mark_tile(x, y);
-  }
+  conditions();
+  sickness_day();
+  nature_day();
   // Couples: the k-th healthy woman and the k-th healthy man of working age. A couple has a child about every 3 days
   // (the woman's cooldown), when there is a free bed and two days of food to spare.
   for (int i = 0; i < MAXV; i++) if (used(i) && cool(i) > 0) set_cool(i, cool(i) - 1);
   for (int k = 0;; k++) {
     int w = -1, m = -1, n;
     n = k;
-    for (int i = 0; i < MAXV && w < 0; i++) if (used(i) && vcls(i) == AGE_ADULT && (V[i].fl & F_FEM) && !(V[i].fl & F_WEAK) && n-- == 0) w = i;
+    for (int i = 0; i < MAXV && w < 0; i++) if (used(i) && vcls(i) == AGE_ADULT && (V[i].fl & F_FEM) && !(V[i].fl & F_WEAK) && !sick(i) && n-- == 0) w = i;
     n = k;
-    for (int i = 0; i < MAXV && m < 0; i++) if (used(i) && vcls(i) == AGE_ADULT && !(V[i].fl & F_FEM) && !(V[i].fl & F_WEAK) && n-- == 0) m = i;
+    for (int i = 0; i < MAXV && m < 0; i++) if (used(i) && vcls(i) == AGE_ADULT && !(V[i].fl & F_FEM) && !(V[i].fl & F_WEAK) && !sick(i) && n-- == 0) m = i;
     if (w < 0 || m < 0) break;
     int p = pop();
     if (cool(w) > 0 || p >= MAXV || p >= capacity() || s_food < (uint16_t)(p * 6)) continue;
@@ -336,7 +356,8 @@ static void meal(int m) {
   int start = s_deaths + (int)(vr() % MAXV);
   for (int k = 0; k < MAXV; k++) {
     int i = (k + start) % MAXV;
-    if (!used(i) || vact(i) == A_SLEEP || vact(i) == A_BED) continue;
+    int a = vact(i);
+    if (!used(i) || ((a == A_SLEEP || a == A_BED) && !(s_storm && !s_night_now))) continue;      // a storm keeps people home, but they eat there
     if (s_food > 0) {
       s_food--;
       set_hunger(i, 0);
@@ -345,7 +366,7 @@ static void meal(int m) {
       mark_tile(V[i].x, V[i].y);
     } else {
       set_hunger(i, hunger(i) + 1);
-      if (hunger(i) >= HUNGER_WEAK) { V[i].fl |= F_WEAK; s_sick = 1; }
+      if (hunger(i) >= HUNGER_WEAK) V[i].fl |= F_WEAK;
       if (hunger(i) >= HUNGER_DEATH + healer) kill(i);
     }
   }
@@ -355,6 +376,11 @@ static int meal_minute(int m) { return m == MEAL_1 || m == MEAL_2 || m == MEAL_3
 
 void village_minute(int m, int night) {
   int changed = 0;
+  conditions();
+  s_night_now = (uint8_t)night;
+  int stay = night || s_storm;                                  // asleep, or sheltering from a storm
+  if (night != s_prev_night) { if (night && s_prev_night != 255) night_begin(); s_prev_night = (uint8_t)night; }
+  if (!night && m == 9 * 60) for (int k = 0; k < (int)sizeof(s_fire); k++) s_fire[k] = 0;      // the fires burn down in the morning
   // eating takes one minute
   for (int i = 0; i < MAXV; i++) if (used(i) && vact(i) == A_EAT) { set_act(i, A_IDLE); mark_tile(V[i].x, V[i].y); }
 
@@ -362,7 +388,7 @@ void village_minute(int m, int night) {
   for (int i = 0; i < MAXV; i++) {
     if (!used(i)) continue;
     int a = vact(i);
-    if (night) {
+    if (stay) {
       if (a != A_BED && a != A_SLEEP) set_act(i, A_BED);
     } else if (a == A_BED || a == A_SLEEP) {
       set_act(i, A_IDLE); s_woke = 1; mark_tile(V[i].x, V[i].y);
@@ -380,18 +406,25 @@ void village_minute(int m, int night) {
 
   if (meal_minute(m)) meal(m);
 
-  // thirst: every 20 minutes awake, every hour asleep
-  if (m % 20 == 0)
+  // exposure: rain on people outside, cold on people outside
+  if (m % 30 == 0 && (s_rainy || s_storm))
+    for (int i = 0; i < MAXV; i++) { int a = vact(i); if (used(i) && (a == A_GO || a == A_WORK || a == A_DRINK || a == A_RET) && (s_ill[i] & 15) < 15) s_ill[i]++; }
+  if (m % 60 == 0 && s_cold)
+    for (int i = 0; i < MAXV; i++) { int a = vact(i); if (used(i) && (a == A_GO || a == A_WORK || a == A_DRINK || a == A_RET) && (s_ill[i] & 15) < 15) s_ill[i]++; }
+
+  // thirst: every 20 minutes awake (every 10 above 28 C), every hour asleep
+  if (m % (s_hot ? 10 : 20) == 0)
     for (int i = 0; i < MAXV; i++) {
       if (!used(i) || ((vact(i) == A_SLEEP) && m % 60 != 0)) continue;
-      set_thirst(i, thirst(i) + 1);
-      if (thirst(i) >= 28) { V[i].fl |= F_WEAK; s_sick = 1; }
+      set_thirst(i, thirst(i) + 1); s_thirst_n++;
+      if (thirst(i) >= 28) V[i].fl |= F_WEAK;
       if (thirst(i) >= 31 && m % 60 == 0) { set_hunger(i, hunger(i) + 1); if (hunger(i) >= HUNGER_DEATH + 1) kill(i); }
     }
   for (int i = 0; i < MAXV; i++) {
     if (!used(i) || thirst(i) < 12) continue;
     int a = vact(i);
-    if (a == A_BED || a == A_SLEEP || a == A_EAT || a == A_DRINK || a == A_RET) continue;
+    if (a == A_EAT || a == A_DRINK || a == A_RET) continue;
+    if ((a == A_BED || a == A_SLEEP) && !(s_storm && !night && s_water > 0)) continue;      // at home in a storm they drink from the jugs
     if (s_water > 0) { s_water--; drink(i); }
     else set_act(i, A_DRINK);
   }
@@ -399,7 +432,7 @@ void village_minute(int m, int night) {
   // work
   int sb = first_site();
   for (int i = 0; i < MAXV; i++) {
-    if (!used(i) || vact(i) != A_WORK || (V[i].fl & F_WEAK)) continue;
+    if (!used(i) || vact(i) != A_WORK || (V[i].fl & F_WEAK) || sick(i)) continue;
     switch (vrole(i)) {
       case R_FARMER: {
         int b = nth_crop(rank_of(i));
@@ -416,18 +449,10 @@ void village_minute(int m, int night) {
         break;
       }
       case R_FISHER:
-        if (m % 15 == 0) { s_food = (uint16_t)(s_food + (count_done(B_FISH) ? 3 : 2)); s_src |= 8; }
+        if (m % 15 == 0) { s_food = (uint16_t)(s_food + (count_done(B_FISH) ? 3 : 2) + (s_rainy ? 1 : 0)); s_src |= 8; }      // fish bite better in the rain
         break;
       case R_LUMBER:
-        if (m % 8 == 0) {
-          static const int8_t D[4][2] = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}};
-          int found = 0;
-          for (int k = 0; k < 4 && !found; k++) {
-            int tx = V[i].x + D[k][0], ty = V[i].y + D[k][1];
-            if (tree_at(tx, ty)) { world_clear_object(tx, ty); s_wood = (uint16_t)(s_wood + 3 + (count_done(B_LUMBER) ? 1 : 0)); found = 1; mark_tile(tx, ty); }
-          }
-          if (!found) set_act(i, A_IDLE);
-        }
+        if (m % 8 == 0 && !lumberjack_work(V[i].x, V[i].y)) set_act(i, A_IDLE);
         break;
       case R_BUILDER:
         if (sb >= 0 && bsite(sb)) {
@@ -442,14 +467,22 @@ void village_minute(int m, int night) {
   }
   if (changed) { for (int b = 0; b < MAXB; b++) if (bused(b)) mark_tile(B[b].x, B[b].y); rebuild_homes(); assign_roles(); }
 
-  // the fields grow by themselves, 4 minutes per timer unit
-  if (m % 4 == 0)
+  // the fields grow by themselves, 4 minutes per timer unit: half as fast again in rain, not at all under snow or frost
+  if (m % 4 == 0) {
+    int frozen = s_snowing || s_snow_lvl > 0 || world_temp10() < 0;
     for (int b = 0; b < MAXB; b++)
       if (bused(b) && !(B[b].tp & SITE) && is_crop(btype(b)) && (B[b].st & 3) < 2) {
-        uint8_t t = (uint8_t)((B[b].st >> 2) + 1);
+        s_crop_n++;
+        if (frozen) continue;
+        int add = 1 + ((s_rainy || s_storm) && m % 8 == 0 ? 1 : 0);
+        s_crop_u += (uint32_t)add;
+        int t = (B[b].st >> 2) + add;
         if (t >= 60) { B[b].st = (uint8_t)((B[b].st & 3) + 1); mark_tile(B[b].x, B[b].y); }
         else B[b].st = (uint8_t)((B[b].st & 3) | (t << 2));
       }
+  }
+  snow_minute(m);
+  nature_minute();
 
   // faith: awake adults believe, elders pray twice as much
   if (m % 30 == 0) {
@@ -475,7 +508,7 @@ void village_minute(int m, int night) {
     if (s_roles_dirty) { s_roles_dirty = 0; assign_roles(); }
     for (int i = 0; i < MAXV; i++) {
       if (!used(i)) continue;
-      if (vact(i) == A_IDLE && !(V[i].fl & F_WEAK) && vrole(i) != R_CHILD && vrole(i) != R_IDLE && job_key(i)) set_act(i, A_GO);
+      if (vact(i) == A_IDLE && !(V[i].fl & F_WEAK) && (sick(i) || (vrole(i) != R_CHILD && vrole(i) != R_IDLE)) && !s_storm && job_key(i)) set_act(i, A_GO);
     }
   }
 }
@@ -525,8 +558,9 @@ void village_tick(uint32_t dt, int night) {
     for (int i = 0; i < MAXV; i++) {
       if (!used(i)) continue;
       int a = vact(i);
-      if (a == A_WORK || a == A_EAT || vrole(i) == R_CHILD || vrole(i) == R_ELDER) mark_tile(V[i].x, V[i].y);
+      if (a == A_WORK || a == A_EAT || vrole(i) == R_CHILD || vrole(i) == R_ELDER || sick(i)) mark_tile(V[i].x, V[i].y);
     }
+    for (int b = 0; b < MAXB; b++) if (bused(b) && fire_at(b)) mark_tile(B[b].x, B[b].y - 1);      // chimney smoke
   }
   if (s_vacc < VSTEP_MS) return;
   int steps = (int)(s_vacc / VSTEP_MS);
@@ -580,6 +614,7 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
     if (py + GC_TILE <= wy0 || py >= wy0 + GC_STRIP_H || px + GC_TILE <= wx0 || px >= wx0 + GC_W) continue;
     blit_sprite(out, wy0, px - wx0, py, GC_VILLAGE(VA_RAMP), 0, 0, g_wpal);
   }
+  draw_forest_ground(out, wx0, wy0);
   // buildings
   for (int b = 0; b < MAXB; b++) {
     if (!bused(b)) continue;
@@ -623,6 +658,7 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
         } else if (cell >= 0) blit_sprite(out, wy0, tx, ty, GC_VILLAGE(cell), 0, 0, g_wpal);
       }
   }
+  draw_smoke(out, wx0, wy0);
   // villagers
   uint8_t rm[16];
   // painter's order: villagers lower on the map are drawn after (over) the ones above them
@@ -633,7 +669,7 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
     if (sy + GC_TILE <= wy0 || sy - 10 >= wy0 + GC_STRIP_H || sx + 16 <= 0 || sx >= GC_W) continue;
     int role = vrole(i), act = vact(i), cls = vcls(i), dir = V[i].fl >> 6;
     for (int k = 0; k < 16; k++) rm[k] = (uint8_t)k;
-    rm[9] = (uint8_t)((V[i].fl & F_WEAK) ? 14 : TUNIC[role]);
+    rm[9] = (uint8_t)((V[i].fl & F_WEAK) ? 14 : (sick(i) ? 4 : TUNIC[role]));
     rm[5] = (uint8_t)(cls == AGE_ELDER ? 13 : ((V[i].fl & F_FEM) ? 6 : 5));
     int frame = is_moving(i) ? 1 + ((V[i].x + V[i].y) & 1) : 0;
     int cell;
@@ -648,7 +684,8 @@ void village_draw(uint16_t* out, int wx0, int wy0) {
     } else if (act == A_RET) {
       blit8(out, wy0, sx + (dir == 2 ? -5 : 11), sy + 7, GC_TOOLS(6));
     }
-    if (act == A_EAT) blit8(out, wy0, sx + 4, sy - 7, GC_ICONS(1));
+    if (sick(i)) { fill_rect(out, wy0, sx + 7, sy - 6, 2, 5, 0x47E0); fill_rect(out, wy0, sx + 5, sy - 4, 6, 2, 0x47E0); }      // a green cross
+    else if (act == A_EAT) blit8(out, wy0, sx + 4, sy - 7, GC_ICONS(1));
     else if (role == R_ELDER && act == A_WORK && (s_vanim & 1)) blit8(out, wy0, sx + 4, sy - 7, GC_ICONS(0));
   }
 }
@@ -694,14 +731,32 @@ int village_stat(int which) {
     case 18: return (int)s_casts;
     case 19: return P.kind;
     case 30: return unreachable_buildings();
+    case 248: return s_aborts;
     case 31: return s_pers;
     case 32: return count_ramps();
     case 33: return s_ponds;
     case 34: return s_plots;
     case 35: return s_levels;
+    case 36: { int n = 0; for (int i = 0; i < MAXV; i++) if (used(i) && sick(i)) n++; return n; }
+    case 37: return s_sick;
+    case 38: return s_sick_deaths;
+    case 39: return s_onsets;
+    case 200: return (int)s_crop_u;
+    case 201: return (int)s_crop_n;
+    case 202: return (int)s_thirst_n;
+    case 203: return (int)s_burned;
+    case 204: return count_trees();
+    case 205: return count_saps(-1);
+    case 206: return s_felled;
+    case 207: return s_snow_lvl;
+    case 208: return s_wet;
+    case 209: return occupied_homes();
+    case 210: { int n = 0; for (int b = 0; b < MAXB; b++) if (bused(b) && fire_at(b)) n++; return n; }
     case 14: { int n = 0; for (int i = 0; i < MAXV; i++) if (used(i) && vact(i) == A_SLEEP) n++; return n; }
     default: break;
   }
+  if (which >= 240 && which < 248) return which < 244 ? s_cs[which - 240][0] : s_cs[which - 244][1];      // cloud shadows: x, then y (world pixels)
+  if (which >= 211 && which < 211 + SAP_N) { uint16_t e = s_sap[which - 211]; return e == 0xFFFF ? -1 : (sap_x(e) | (sap_y(e) << 8) | (sap_age(e) << 16) | (sap_kind(e) << 20)); }
   if (which >= 20 && which < 20 + R_COUNT) { int n = 0; for (int i = 0; i < MAXV; i++) if (used(i) && vrole(i) == which - 20) n++; return n; }
   if (which >= 40 && which < 40 + B_COUNT) return count_done(which - 40);
   if (which >= 110 && which < 110 + MAXB) {       // building info: x | y << 8 | w << 16 | h << 20 | type << 24 | site << 28, -1 if unused
@@ -711,14 +766,15 @@ int village_stat(int which) {
     bdims(b, &w, &h);
     return B[b].x | (B[b].y << 8) | (w << 16) | (h << 20) | (btype(b) << 24) | ((B[b].tp & SITE) ? 1 << 28 : 0);
   }
-  if (which >= 60 && which < 60 + MAXV) { int i = which - 60; return used(i) ? (V[i].x | (V[i].y << 8) | (vact(i) << 16) | (vrole(i) << 20) | (hunger(i) << 24)) : -1; }
+  if (which >= 60 && which < 60 + MAXV) { int i = which - 60; return used(i) ? (V[i].x | (V[i].y << 8) | (vact(i) << 16) | (vrole(i) << 20) | (hunger(i) << 24) | (sick(i) << 27) | (vcls(i) << 28) | ((V[i].fl & F_WEAK) ? 1 << 30 : 0)) : -1; }
   return 0;
 }
 
 // ---------------------------------------------------------------- new game, save
 void village_reset(int mix) {
-  for (int i = 0; i < MAXV; i++) { V[i].fl = 0; V[i].ra = 0; s_home[i] = 255; }
+  for (int i = 0; i < MAXV; i++) { V[i].fl = 0; V[i].ra = 0; s_home[i] = 255; s_ill[i] = 0; }
   for (int b = 0; b < MAXB; b++) B[b].tp = 0xFF;
+  nature_reset();
   s_rng = (uint32_t)mix * 2654435761u + 0x9e3779b9u;
   if (!s_rng) s_rng = 1;
   s_food = 18; s_wood = 12; s_faith = 0; s_water = 0; s_deaths = s_births = 0;
@@ -744,7 +800,7 @@ void village_pack(uint8_t* p) {
   for (int i = 0; i < MAXV && nv < PK_V; i++) {
     if (!used(i)) continue;
     uint8_t* q = p + PK_V0 + nv * 4;
-    uint32_t a = (uint32_t)(V[i].x & 31) | ((uint32_t)(V[i].y & 31) << 5) | ((uint32_t)(V[i].fl & F_AGE) << 10) | ((V[i].fl & F_FEM) ? 1u << 12 : 0) | ((V[i].fl & F_WEAK) ? 1u << 13 : 0);
+    uint32_t a = (uint32_t)(V[i].x & 31) | ((uint32_t)(V[i].y & 31) << 5) | ((uint32_t)(V[i].fl & F_AGE) << 10) | ((V[i].fl & F_FEM) ? 1u << 12 : 0) | ((V[i].fl & F_WEAK) ? 1u << 13 : 0) | (sick(i) ? 1u << 14 : 0);
     q[0] = (uint8_t)a; q[1] = (uint8_t)(a >> 8); q[2] = V[i].age; q[3] = V[i].nd;
     nv++;
   }
@@ -766,8 +822,9 @@ void village_pack(uint8_t* p) {
 
 void village_unpack(const uint8_t* p) {
   if (p[0] != 0x56 || p[1] > PK_V || p[2] > PK_B) { village_reset((int)g_world.start_x * 31 + g_world.start_y); return; }
-  for (int i = 0; i < MAXV; i++) { V[i].fl = 0; V[i].ra = 0; s_home[i] = 255; }
+  for (int i = 0; i < MAXV; i++) { V[i].fl = 0; V[i].ra = 0; s_home[i] = 255; s_ill[i] = 0; }
   for (int b = 0; b < MAXB; b++) B[b].tp = 0xFF;
+  nature_reset();
   s_rng = 0x2545F491u ^ ((uint32_t)p[3] << 8) ^ p[5];
   s_food = (uint16_t)(p[3] | (p[4] << 8)); s_wood = (uint16_t)(p[5] | (p[6] << 8)); s_faith = (uint16_t)(p[7] | (p[8] << 8)); s_water = p[9];
   if (s_food > 999) s_food = 999;
@@ -809,6 +866,7 @@ void village_unpack(const uint8_t* p) {
     V[i].age = q[2];
     V[i].nd = q[3];
     if ((a >> 13) & 1) V[i].fl |= F_WEAK;
+    if ((a >> 14) & 1) { s_ill[i] = 0x80; s_sick = 1; }
   }
   if (!pop()) village_reset((int)g_world.start_x * 31 + g_world.start_y);
   heal_terrain();                    // the land is generated again from the seed: make it fit the loaded buildings
@@ -826,7 +884,22 @@ void village_debug(int cmd, int32_t arg) {
       break;
     }
     case 4: { int f = arg < 0 ? 0 : (arg > 9999 ? 9999 : arg); s_earned += (uint32_t)(f - (int)s_faith); s_faith = (uint16_t)f; break; }
-    case 3: for (int k = 0; k < MAXV; k++) if (used(k)) { set_thirst(k, arg < 0 ? 0 : arg); if (arg >= 28) { V[k].fl |= F_WEAK; s_sick = 1; } } break;
+    case 3: for (int k = 0; k < MAXV; k++) if (used(k)) { set_thirst(k, arg < 0 ? 0 : arg); if (arg >= 28) V[k].fl |= F_WEAK; } break;
+    case 5:     // arg = villager index: that villager falls sick; -1: everybody
+      for (int k = 0; k < MAXV; k++) if (used(k) && (arg < 0 || k == arg) && !sick(k)) { s_ill[k] = (uint8_t)((s_ill[k] & 15) | 0x80); s_sick = 1; s_onsets++; mark_tile(V[k].x, V[k].y); }
+      s_roles_dirty = 1;
+      break;
+    case 6: {   // arg = index | class << 8 | 1 << 16 (weak): change that villager's age class
+      int k = arg & 255, cls = (arg >> 8) & 3;
+      if (k < MAXV && used(k) && cls <= AGE_ELDER) {
+        int l = life(k);
+        V[k].fl = (uint8_t)((V[k].fl & ~F_AGE) | cls);
+        V[k].age = (uint8_t)((V[k].age & 0xE0) | (cls == AGE_ELDER ? l - 4 : (cls == AGE_ADULT ? 8 : 0)));
+        if ((arg >> 16) & 1) V[k].fl |= F_WEAK; else V[k].fl &= (uint8_t)~F_WEAK;
+        s_roles_dirty = 1;
+      }
+      break;
+    }
     default: break;
   }
 }

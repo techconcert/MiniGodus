@@ -17,7 +17,9 @@ enum { WAIT_MAX = 36, MAX_OPS = 100 };
 struct Proj { uint8_t kind, tp, var, x, y, w, h, hgt, ops, wait; };   // hgt 255: no levelling (fishing hut)
 static Proj     P;
 static uint8_t  s_pers, s_waiting, s_ramping;
-static uint8_t  s_fail[4][2], s_failn;                   // spots where a project failed
+enum { NFAIL = 12 };
+static uint8_t  s_fail[NFAIL][2], s_failn, s_pneed;
+static uint16_t s_aborts;                                // projects the shaman gave up (a statistic)                   // spots where a project failed
 static uint8_t  s_plot[3][2];                            // reserved flat 3x3 plots (x, 255 = none)
 static uint16_t s_ramp[10];                              // the last ramps he cut (x | y << 5), 0xFFFF = none
 static uint8_t  s_rampn, s_cool[N_COUNT], s_mend_cool;
@@ -25,19 +27,20 @@ static uint32_t s_spent;
 static uint16_t s_casts, s_ponds, s_plots, s_levels;
 static uint8_t  s_wx, s_wy, s_has_op;
 static int8_t   s_wd, s_ld;
-static uint8_t  s_lx, s_ly, s_skip[4][2], s_skipn;       // the last ramp tile he cut, and tiles that could not be mended (they tug both ways)
+static uint8_t  s_lx, s_ly, s_skip[NFAIL][2], s_skipn;       // the last ramp tile he cut, and tiles that could not be mended (they tug both ways)
 
 static int hh(int x, int y) { return MT_H(g_map[y * WM + x]); }
 static int iab(int v) { return v < 0 ? -v : v; }
 
 void shaman_reset(void) {
   P.kind = PK_NONE; s_waiting = s_ramping = s_has_op = 0; s_failn = 0; s_mend_cool = 0;
-  for (int i = 0; i < 4; i++) s_fail[i][0] = s_fail[i][1] = 255;
+  for (int i = 0; i < NFAIL; i++) s_fail[i][0] = s_fail[i][1] = 255;
+  s_pneed = 0; s_aborts = 0;
   for (int i = 0; i < 3; i++) s_plot[i][0] = s_plot[i][1] = 255;
   for (int i = 0; i < 10; i++) s_ramp[i] = 0xFFFF;
   for (int i = 0; i < N_COUNT; i++) s_cool[i] = 0;
   s_rampn = 0; s_spent = 0; s_casts = 0; s_ponds = s_plots = s_levels = 0; s_ld = 0; s_lx = s_ly = 255; s_skipn = 0;
-  for (int i = 0; i < 4; i++) s_skip[i][0] = s_skip[i][1] = 255;
+  for (int i = 0; i < NFAIL; i++) s_skip[i][0] = s_skip[i][1] = 255;
   uint32_t h = G.s.seed * 2654435761u;
   h ^= h >> 15;
   s_pers = (uint8_t)((h >> 3) & 3);
@@ -94,8 +97,14 @@ static int near_coast(void) {
 }
 // 1 while a flattened 3x3 plot is waiting for the next home
 static int plot_ready(void) { for (int i = 0; i < 3; i++) if (s_plot[i][0] != 255) return 1; return 0; }
-static int bad_spot(int x, int y) { for (int i = 0; i < 4; i++) if (s_fail[i][0] == x && s_fail[i][1] == y) return 1; return 0; }
-static void add_fail(int x, int y) { s_fail[s_failn & 3][0] = (uint8_t)x; s_fail[s_failn & 3][1] = (uint8_t)y; s_failn++; }
+// anchors next to a spot where a project failed are no better: the planner would pick the neighbour and fail the same way
+static int bad_spot(int x, int y) {
+  for (int i = 0; i < NFAIL; i++) if (s_fail[i][0] != 255 && iab(s_fail[i][0] - x) <= 2 && iab(s_fail[i][1] - y) <= 2) return 1;
+  return 0;
+}
+static void add_fail(int x, int y) { s_fail[s_failn][0] = (uint8_t)x; s_fail[s_failn][1] = (uint8_t)y; s_failn = (uint8_t)((s_failn + 1) % NFAIL); }
+// a failed project puts the need that started it on cooldown, so the shaman does something else for a while
+static void proj_failed(int x, int y) { add_fail(x, y); s_cool[s_pneed] = 6; if (s_aborts < 65535) s_aborts++; }
 
 // ------------------------------------------------------------------ site search
 struct Cand { uint8_t x, y, var, H; int16_t cost, faith; };
@@ -184,6 +193,21 @@ static int eval_site(int k, int var, int ax, int ay, int nolevel, int* Hout, int
   }
   if (nolevel && (best > 0 || objs)) return NOSITE;
   faith = best + objs;
+  // every tile that has to change needs a neighbour he can stand on now or can make standable: not an island of rock and water
+  if (k != SP_POND && !nolevel)
+    for (int j = 0; j < h; j++)
+      for (int i = 0; i < w; i++) {
+        int x = ax + i, y = ay + j;
+        if (!MT_OBJ(g_map[y * WM + x]) && hh(x, y) == H) continue;
+        static const int8_t D[4][2] = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}};
+        int ok = 0;
+        for (int d = 0; d < 4 && !ok; d++) {
+          int nx = x + D[d][0], ny = y + D[d][1];
+          if (nx < 0 || ny < 0 || nx >= WM || ny >= WM) continue;
+          ok = g_dist[ny * WM + nx] != 255 || in_rect(nx, ny, ax, ay, w, h) || modifiable(nx, ny);
+        }
+        if (!ok) return NOSITE;
+      }
   // ---- the ring around the plot
   int ring = 0;
   for (int y = ay - 1; y <= ay + h; y++)
@@ -352,8 +376,17 @@ static void place_start_tent(void) {
 }
 
 // ------------------------------------------------------------------ the executor
-static int skipped(int x, int y) { for (int q = 0; q < 4; q++) if (s_skip[q][0] == x && s_skip[q][1] == y) return 1; return 0; }
-static void add_skip(int x, int y) { s_skip[s_skipn & 3][0] = (uint8_t)x; s_skip[s_skipn & 3][1] = (uint8_t)y; s_skipn++; }
+static int skipped(int x, int y) { for (int q = 0; q < NFAIL; q++) if (s_skip[q][0] == x && s_skip[q][1] == y) return 1; return 0; }
+static void add_skip(int x, int y) { s_skip[s_skipn][0] = (uint8_t)x; s_skip[s_skipn][1] = (uint8_t)y; s_skipn = (uint8_t)((s_skipn + 1) % NFAIL); }
+// 1 if the shaman can stand beside (x, y): needs g_dist from his own tile (world_flow)
+static int op_reachable(int x, int y) {
+  static const int8_t D[4][2] = {{0, 1}, {0, -1}, {-1, 0}, {1, 0}};
+  for (int d = 0; d < 4; d++) {
+    int nx = x + D[d][0], ny = y + D[d][1];
+    if (nx >= 0 && ny >= 0 && nx < WM && ny < WM && g_dist[ny * WM + nx] != 255) return 1;
+  }
+  return 0;
+}
 
 // Would changing this tile cut the village in two or shut a building in? (g_dist is used)
 static int op_breaks(int x, int y, int d) {
@@ -382,7 +415,7 @@ static int next_terra(int sx, int sy, int* tx, int* ty, int* dir) {
       if (skipped(x, y)) continue;
       if (MT_OBJ(b) && t >= 2) d = 0;
       else if (P.hgt != 255 && t != P.hgt) d = t < P.hgt ? 1 : -1;
-      if (d == -2) continue;
+      if (d == -2 || !op_reachable(x, y)) continue;
       int dist = iab(x - sx) + iab(y - sy);
       if (dist < bd) { bd = dist; *tx = x; *ty = y; *dir = d; }
     }
@@ -407,10 +440,10 @@ static int next_ramp(int sx, int sy, int* tx, int* ty, int* dir) {
         int d = hh(mx, my) < hh(ox, oy) ? 1 : -1;
         if (d < 0 && hh(mx, my) <= 2) continue;               // never flood a beach
         int skip = 0;
-        for (int q = 0; q < 4; q++) if (s_skip[q][0] == mx && s_skip[q][1] == my) skip = 1;
+        if (skipped(mx, my) || !op_reachable(mx, my)) skip = 1;
         if (skip) continue;
         if (mx == s_lx && my == s_ly && d == -s_ld) {         // it would undo the last cut: this tile is pulled both ways
-          s_skip[s_skipn & 3][0] = (uint8_t)mx; s_skip[s_skipn & 3][1] = (uint8_t)my; s_skipn++;
+          add_skip(mx, my);
           continue;
         }
         int dist = iab(mx - sx) + iab(my - sy);
@@ -454,7 +487,7 @@ static void finish_project(void) {
   }
   if (ok && lay_site(p.tp, p.var, p.x, p.y, 1) >= 0) return;
   s_wood = (uint16_t)(s_wood + cost_wood(p.tp));          // he could not build here: the wood is returned
-  add_fail(p.x, p.y);
+  proj_failed(p.x, p.y);
 }
 
 int shaman_target(int sx, int sy, int* tx, int* ty) {
@@ -463,6 +496,7 @@ int shaman_target(int sx, int sy, int* tx, int* ty) {
   for (int guard = 0; guard < 8; guard++) {
     if (s_has_op) { *tx = s_wx; *ty = s_wy; return 1; }
     int x = 0, y = 0, d = 0, found = 0;
+    world_flow(sx, sy);                                   // which tiles can he stand beside?
     if (P.ops < MAX_OPS && next_terra(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 0; }
     else if (P.ops < MAX_OPS + 70 && P.kind != PK_NONE && next_ramp(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 1; }
     if (!found) { finish_project(); return 0; }
@@ -476,7 +510,7 @@ int shaman_target(int sx, int sy, int* tx, int* ty) {
 
 void shaman_abort(void) {
   if (P.kind == PK_BUILD) s_wood = (uint16_t)(s_wood + cost_wood(P.tp));
-  if (P.kind != PK_NONE) add_fail(P.x, P.y);
+  if (P.kind != PK_NONE) proj_failed(P.x, P.y);
   P.kind = PK_NONE; s_has_op = 0;
 }
 
@@ -559,13 +593,13 @@ static int start_project(int k, int nolevel_unused) {
   P.kind = k == SP_POND ? PK_POND : (k == SP_PLOT ? PK_PLOT : (k == SP_LEVEL ? PK_LEVEL : PK_BUILD));
   P.tp = (uint8_t)(k < B_COUNT ? k : 0); P.var = c.var; P.x = c.x; P.y = c.y; P.w = (uint8_t)w; P.h = (uint8_t)h; P.hgt = c.H; P.ops = 0; P.wait = 0;
   s_has_op = 0; s_ramping = 0;
-  for (int i = 0; i < 4; i++) s_skip[i][0] = s_skip[i][1] = 255;
+  for (int i = 0; i < NFAIL; i++) s_skip[i][0] = s_skip[i][1] = 255;
   if (k < B_COUNT) s_wood = (uint16_t)(s_wood - cost_wood(k));
   return 1;
 }
 
-// placeholder hooks for later releases: r5 gives the infirmary a sickness to heal, r6 the monument its spare faith
-static int need_health(int weak) { return (weak > 0 || s_sick) && bcount(B_INFIRM, 1) == 0 ? 110 : 0; }
+// health: the first villager who falls sick (real sickness, not hunger) calls for an infirmary. A hook for r6: the monument's spare faith
+static int need_health(int weak) { (void)weak; return s_sick && bcount(B_INFIRM, 1) == 0 ? 110 : 0; }
 static int need_monument(void) { return 0; }
 
 static int water_far(void) {            // some home has no water within 8 tiles
@@ -708,7 +742,7 @@ static void shaman_plan(void) {
       n = m;
     }
     ok = try_kinds(ks, n, &fs);
-    if (ok) { s_roles_dirty = 1; return; }
+    if (ok) { s_pneed = (uint8_t)best; s_roles_dirty = 1; return; }
     if (fs && bs >= 70) saving = 1;
     if (!fs && !saving) s_cool[best] = 6;
   }

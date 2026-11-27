@@ -21,14 +21,28 @@ TOWNS = [(0, 0, 11), (2, 3, 21), (3, 1, 7), (5, 2, 41)]
 VILLAGES = [(0, 0, 11, 3), (2, 3, 21, 4), (0, 2, 11, 5), (3, 1, 7, 4)]
 
 
+# r5: (name, seed, landform, climate, minutes, mode, boost, tokens)
+R5_SHOTS = [
+    ("weather-rain", 11, 0, 0, 5 * 1440 + 300, "", 0, "w2,t120,Fv"),
+    ("weather-storm", 11, 0, 0, 5 * 1440 + 300, "", 0, "w3,t130,Fv,flash,lead=120"),
+    ("weather-snow", 41, 5, 0, 5 * 1440 + 300, "", 0, "w5,t-30,Fh,lead=240"),
+    ("weather-heat", 21, 2, 1, 4 * 1440 + 480, "", 0, "w0,t330,pop=14,Fc,lead=300"),
+    ("weather-cold-night", 11, 0, 2, 4 * 1440 + 17 * 60, "", 0, "w0,t-40,pop=8,Fb,lead=1200"),
+    ("weather-fog", 11, 0, 0, 5 * 1440 + 300, "", 0, "w4,t90,Fv"),
+    ("weather-clouds", 11, 0, 0, 5 * 1440 + 420, "", 0, "w1,t190,Fv,shadow"),
+    ("infirmary-sick", 21, 2, 3, 2 * 1440 + 300, "i", 50, "Fi"),
+    ("lumberjack-saplings", 11, 0, 0, 2 * 1440 + 300, "l", 0, "Fl,wood0,pop=8"),
+]
+
+
 def build():
     srcs = [os.path.join(ROOT, "lib", "gamecore", "src", f) for f in sorted(os.listdir(os.path.join(ROOT, "lib", "gamecore", "src"))) if f.endswith(".cpp")]
     subprocess.check_call(["g++", "-std=c++17", "-O2", "-o", EXE, os.path.join(ROOT, "tools", "shots.cpp")] + srcs)
 
 
-def shot(mode, path, seed, lf, cl, ticks=0, scale=1, minutes=0, extra="", boost=0):
+def shot(mode, path, seed, lf, cl, ticks=0, scale=1, minutes=0, extra="", boost=0, tokens=""):
     ppm = path + ".ppm"
-    subprocess.check_call([EXE, mode, ppm, str(seed), str(lf), str(cl), str(ticks), str(minutes), extra or "-", str(boost)],
+    subprocess.check_call([EXE, mode, ppm, str(seed), str(lf), str(cl), str(ticks), str(minutes), extra or "-", str(boost), tokens],
                           stderr=subprocess.DEVNULL)
     img = Image.open(ppm)
     if scale > 1:
@@ -66,6 +80,9 @@ def main():
     shot("screen", os.path.join(OUT, "pond.png"), 1, 5, 0, 0, 2, 1, "pond", 200)
     for lf, cl, seed in TOWNS:
         shot("screen", os.path.join(OUT, f"town-day20-{LANDFORMS[lf]}-{CLIMATES[cl]}.png"), seed, lf, cl, 0, 2, 19 * 1440 + 300, "town")
+    # r5: weather (the tokens are explained at the top of tools/shots.cpp), sickness and wood. minutes = day * 1440 + minutes since 06:00
+    for name, seed, lf, cl, minutes, mode, boost, tokens in R5_SHOTS:
+        shot("screen", os.path.join(OUT, name + ".png"), seed, lf, cl, 0, 2, minutes, mode, boost, tokens)
     os.remove(EXE)
     print("wrote", OUT)
 
