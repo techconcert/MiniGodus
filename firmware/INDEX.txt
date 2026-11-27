@@ -1,3 +1,3 @@
-SDP_MiniGodus_quest_6-077314a.bin
-SDP_MiniGodus_test_6-077314a.bin
+SDP_MiniGodus_quest_7-05899f8.bin
+SDP_MiniGodus_test_7-05899f8.bin
 Flash only the files listed here. Files in firmware/obsolete are old.
