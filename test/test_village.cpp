@@ -117,27 +117,28 @@ static void test_save_round_trip() {
   int wall = 8 * 60;
   gc_set_clock(8, 0, 1);
   for (int m = 0; m < 600; m++) minute(wall);
-  uint8_t buf[GC_SAVE_BYTES];
-  CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_BYTES);
+  uint8_t buf[GC_SAVE_TOTAL];
+  CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_TOTAL);
   int pop = vq(Q_POP), food = vq(Q_FOOD), wood = vq(Q_WOOD), faith = vq(Q_FAITH), built = vq(Q_BUILT) + vq(Q_SITES);
   gc_init(GC_SCENE_VILLAGE, 5, 0);
   CHECK(gc_save_import(buf, sizeof buf) == 1);
   CHECK(vq(Q_FOOD) == food && vq(Q_WOOD) == wood && vq(Q_FAITH) == faith);
-  CHECK(vq(Q_POP) == (pop < 16 ? pop : 16));
-  CHECK(vq(Q_BUILT) + vq(Q_SITES) == (built < 18 ? built : 18));
+  CHECK(vq(Q_POP) == pop);                           // the whole village is saved now
+  CHECK(vq(Q_BUILT) + vq(Q_SITES) == built);
   check_sane();
   for (int m = 0; m < 300; m++) minute(wall);
   check_sane();
   // garbage in the village bytes never breaks the game: flip bytes, fix the CRC, import
   for (int k = 0; k < 40; k++) {
-    uint8_t b2[GC_SAVE_BYTES];
-    for (int i = 0; i < GC_SAVE_BYTES; i++) b2[i] = buf[i];
-    for (int i = 64; i < 192; i++) b2[i] = (uint8_t)(b2[i] * 31u + k * 17u + (i ^ k));
+    uint8_t b2[GC_SAVE_TOTAL];
+    for (int i = 0; i < GC_SAVE_TOTAL; i++) b2[i] = buf[i];
+    for (int i = 64; i < GQ_SAVE_HEAD; i++) b2[i] = (uint8_t)(b2[i] * 31u + k * 17u + (i ^ k));
+    if (k % 2) for (int i = GQ_SAVE_HEAD; i < GC_SAVE_TOTAL; i++) b2[i] = (uint8_t)(b2[i] * 29u + k * 13u + i);   // the villagers, buildings and map parts too
     b2[64] = k % 3 ? 0x56 : b2[64];
     b2[65] = (uint8_t)(k % 17);
     b2[66] = (uint8_t)(k % 19);
     uint32_t c = 0xFFFFFFFFu;
-    for (int i = 12; i < 192; i++) { c ^= b2[i]; for (int j = 0; j < 8; j++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u))); }
+    for (int i = 12; i < GQ_SAVE_HEAD; i++) { c ^= b2[i]; for (int j = 0; j < 8; j++) c = (c >> 1) ^ (0xEDB88320u & (0u - (c & 1u))); }
     c = ~c;
     std::memcpy(b2 + 8, &c, 4);
     if (gc_save_import(b2, sizeof b2) == 1) {
@@ -158,9 +159,9 @@ static void test_birth_cadence() {
     for (int m = 0; m < 1440; m++) { minute(wall); if (m % 200 == 0) gc_debug(GQ_DBG_FOOD, 700); }
     int b = vq(Q_BIRTHS);
     if (b > last) { day_of_birth[seen++ % 10] = d; last = b; }
-    if (d == 4) CHECK(vq(Q_BIRTHS) >= 1 && vq(Q_BIRTHS) <= 2);          // days 1 and 4 at most, for the only couple
+    if (d == 2) CHECK(vq(Q_BIRTHS) >= 1 && vq(Q_BIRTHS) <= 1);          // one child in the first 3 days for the only couple (settlers arrive on day 3)
   }
-  CHECK(vq(Q_BIRTHS) >= 2 && vq(Q_BIRTHS) <= 5);
+  CHECK(vq(Q_BIRTHS) >= 2 && vq(Q_BIRTHS) <= 10);      // a second couple (settlers) joins on day 3
   std::printf("births on days:");
   for (int i = 0; i < seen && i < 10; i++) std::printf(" %d", day_of_birth[i]);
   std::printf("\n");

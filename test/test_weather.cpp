@@ -357,17 +357,16 @@ static void test_forest() {
       for (int m = 0; m < 1440; m++) {
         minute(wall);
         if (m % 60 == 0) {
-          if (d < 18) gc_debug(GQ_DBG_WOOD, 0);                   // the village needs wood all the time
+          if (d < 12) gc_debug(GQ_DBG_WOOD, 0);                   // the village needs wood all the time
           gc_debug(GQ_DBG_FOOD, 400);
           int t = vq(Q_TREES);
+          if (t > last) ups++;                                    // a sapling grew into a tree (it may be felled again the same day)
+          last = t;
           if (t < min_trees) min_trees = t;
           CHECK(t >= 1);                                          // the forest never collapses to nothing
           if (vq(Q_SAPS) > max_saps) max_saps = vq(Q_SAPS);
         }
       }
-      int t = vq(Q_TREES);
-      if (t > last) ups++;
-      last = t;
       if (vq(Q_SAPS) > 0) stumps_seen++;
     }
     int felled = vq(Q_FELLED);
@@ -565,8 +564,8 @@ static void test_save_sick() {
   run(wall, 60);
   gc_debug(GQ_DBG_SICK, 1);
   CHECK(vq(Q_SICK) == 1);
-  uint8_t buf[GC_SAVE_BYTES];
-  CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_BYTES);
+  uint8_t buf[GC_SAVE_TOTAL];
+  CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_TOTAL);
   gc_init(GC_SCENE_VILLAGE, 5, 0);
   CHECK(gc_save_import(buf, sizeof buf) == 1);
   CHECK(vq(Q_SICK) == 1 && vq(Q_SEEN) == 1);                                // the sickness comes back with the save

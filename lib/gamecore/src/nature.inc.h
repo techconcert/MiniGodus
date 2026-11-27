@@ -33,6 +33,7 @@ static void nature_reset(void) {
   for (int i = 0; i < WM; i++) s_wsnow[i] = 0;
   s_snow_lvl = s_wet = s_wet_shown = 0;
   s_sick_deaths = s_onsets = s_felled = 0;
+  s_fishn = 0; s_lean = 0; s_pen_dead = s_pen_born = s_fish_caught = 0;
   s_crop_u = s_crop_n = s_thirst_n = s_burned = 0;
   s_hot = s_cold = s_rainy = s_storm = s_snowing = s_fog_now = 0;
   s_cond = 255; s_prev_night = 255; s_night_now = 0;
@@ -179,6 +180,22 @@ static void nature_day(void) {
     if (!kind) { s_sap[k] = age >= 3 ? 0xFFFF : sap_pack(x, y, age, 0); continue; }
     s_sap[k] = sap_pack(x, y, age, 1);          // a ripe sapling is turned into a tree by nature_minute, one at a time
   }
+  // the forest stays within reach of the village: with fewer than 12 trees (or saplings) a lumberjack can walk to, saplings are planted
+  // on free ground 4 to 12 steps from the green
+  {
+    world_flow(cx(), cy());
+    int reach = 0;
+    for (int y = 1; y < WM - 1; y++)
+      for (int x = 1; x < WM - 1; x++)
+        if (MT_OBJ(g_map[y * WM + x]) == OB_TREE && MT_H(g_map[y * WM + x]) >= 2 &&
+            (g_dist[y * WM + x - 1] != 255 || g_dist[y * WM + x + 1] != 255 || g_dist[(y - 1) * WM + x] != 255 || g_dist[(y + 1) * WM + x] != 255)) reach++;
+    int saps = count_saps(1);
+    for (int tries = 0; tries < 40 && reach + saps < 12 && saps < 8; tries++) {
+      int x = cx() + (int)(vr() % 25) - 12, y = cy() + (int)(vr() % 25) - 12;
+      if (x < 2 || y < 2 || x >= WM - 2 || y >= WM - 2 || g_dist[y * WM + x] < 4 || g_dist[y * WM + x] > 12) continue;
+      if (sap_ok(x, y) && sap_find(x, y) < 0 && sap_put(x, y, 0, 1) >= 0) saps++;
+    }
+  }
   // the forest seeds itself: saplings beside the trees that are left (anywhere when the forest is nearly gone)
   int trees = count_trees(), saps = count_saps(1);
   int tries = trees + saps < 12 ? 5 : 3;
@@ -215,6 +232,72 @@ static void nature_minute(void) {
     return;
   }
 }
+
+// ------------------------------------------------------------------------------------------------ fish (r6)
+// Every water body (sea, lake, river, pond: water tiles that touch) has a stock of fish. A catch takes one fish out of the stock of the
+// body the fisher stands at; every day the stock grows back by a tenth of its size. A body is named by its lowest tile number. Bodies
+// are found by flood fill in the shared g_dist buffer, so nothing besides the stocks (3 bytes per body, 8 bodies) is kept.
+static int fish_cap(int size) { int c = 12 + size * 2; return c > 250 ? 250 : c; }
+
+// Marks the water body of tile (x0, y0) with 0 in g_dist (everything else 255). Returns its size; *low is its lowest tile number.
+static int water_body(int x0, int y0, int* low) {
+  world_flow_begin();
+  int i0 = y0 * WM + x0, n = 1, lo = i0;
+  g_dist[i0] = 0;
+  for (int pass = 0; pass < 80; pass++) {
+    int changed = 0;
+    for (int dir = 0; dir < 2; dir++)
+      for (int k = 0; k < WM * WM; k++) {
+        int i = dir ? WM * WM - 1 - k : k;
+        if (g_dist[i] == 0 || MT_H(g_map[i]) > 1) continue;
+        int x = i % WM, y = i / WM;
+        if ((x > 0 && g_dist[i - 1] == 0) || (x < WM - 1 && g_dist[i + 1] == 0) || (y > 0 && g_dist[i - WM] == 0) || (y < WM - 1 && g_dist[i + WM] == 0)) {
+          g_dist[i] = 0; n++; changed = 1;
+          if (i < lo) lo = i;
+        }
+      }
+    if (!changed) break;
+  }
+  *low = lo;
+  return n;
+}
+
+static int fish_slot(int low, int size) {
+  for (int k = 0; k < s_fishn; k++) if (s_fish_a[k] == (uint16_t)low) return k;
+  if (s_fishn >= 8) return -1;
+  s_fish_a[s_fishn] = (uint16_t)low; s_fish_s[s_fishn] = (uint8_t)fish_cap(size);
+  return s_fishn++;
+}
+
+// A fisher standing at (x, y) casts his line into the nearest water. 1 if he caught a fish.
+static int fish_take(int x, int y) {
+  int wx = -1, wy = -1, best = 99;
+  for (int dy = -2; dy <= 2; dy++)
+    for (int dx = -2; dx <= 2; dx++) {
+      int tx = x + dx, ty = y + dy, d = (dx < 0 ? -dx : dx) + (dy < 0 ? -dy : dy);
+      if (tx < 0 || ty < 0 || tx >= WM || ty >= WM || d >= best || MT_H(g_map[ty * WM + tx]) > 1) continue;
+      best = d; wx = tx; wy = ty;
+    }
+  if (wx < 0) return 1;                                           // no water in reach (he fishes a well or a trough): as before
+  int low, size = water_body(wx, wy, &low), k = fish_slot(low, size);
+  if (k < 0) return 1;
+  if (!s_fish_s[k]) return 0;
+  s_fish_s[k]--; s_fish_caught++;
+  return 1;
+}
+
+static void fish_day(void) {
+  for (int k = 0; k < s_fishn; k++) {
+    int low = s_fish_a[k];
+    if (MT_H(g_map[low]) > 1) { s_fish_a[k] = 0xFFFF; continue; }                // the water was filled in
+    int cap = fish_cap(water_body(low % WM, low / WM, &low)), v = s_fish_s[k] + cap / 10 + 1;
+    s_fish_s[k] = (uint8_t)(v > cap ? cap : v);
+  }
+  int n = 0;
+  for (int k = 0; k < s_fishn; k++) if (s_fish_a[k] != 0xFFFF) { s_fish_a[n] = s_fish_a[k]; s_fish_s[n] = s_fish_s[k]; n++; }
+  s_fishn = (uint8_t)n;
+}
+static int fish_total(void) { int n = 0; for (int k = 0; k < s_fishn; k++) n += s_fish_s[k]; return n; }
 
 // ------------------------------------------------------------------------------------------------ drawing: stumps, saplings, smoke
 static void draw_forest_ground(uint16_t* out, int wx0, int wy0) {

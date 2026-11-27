@@ -34,6 +34,9 @@ enum {
   GQ_Q_MAP_HASH,        // FNV-1a over the 1024 map bytes
   GQ_Q_HERO_ON_LAND,    // 1 while the tile under the shaman's centre is one he may walk on
   GQ_Q_TEMP10,          // tenths of a degree Celsius the rules use (150 without a reading)
+  GQ_Q_PHASE,           // r6: 0 playing, 1 worship day, 2 the village is dying out, 3 summary (monument finished), 4 summary (extinct)
+  GQ_Q_MON_STAGE,       // r6: monument stage 0 (none or only marked) .. 5 (finished)
+  GQ_Q_MON_TYPE,        // r6: 0 pyramid, 1 stone circle, 2 great tree, 3 obelisk, 4 temple
   GQ_Q_COUNT,
   GQ_Q_VILLAGE = 64     // GQ_Q_VILLAGE + n: village numbers (see village_stat in village.cpp: 0 population, 1 food, 2 wood, 3 faith, ...)
 };
@@ -55,13 +58,19 @@ enum { GQ_DBG_SET_DAY, GQ_DBG_NEXT_DAY, GQ_DBG_FORCE_ACT /*arg = GQ_ACT_**/,
        GQ_DBG_TEMP,           // arg = tenths of a degree Celsius forces the temperature, 9999 gives it back to the live reading
        GQ_DBG_SICK,           // arg = villager index (0..47): falls sick; -1 everybody
        GQ_DBG_AGE,            // arg = villager index | age class << 8 (1 adult, 2 elder) | 1 << 16 (weak)
-       GQ_DBG_FLASH };        // a lightning flash now
+       GQ_DBG_FLASH,          // a lightning flash now
+       GQ_DBG_MONUMENT,       // r6: arg = stage 0..5: the monument stands at that stage (laid out if needed, no faith asked)
+       GQ_DBG_PHASE,          // r6: arg = phase: 1 the worship day starts now (monument finished), 3 summary (monument), 4 summary (extinct), 0 back to play
+       GQ_DBG_EXTINCT };      // r6: every villager dies
 
-// ---- the saved state, 192 bytes, little-endian, no padding. The core only exports and imports bytes;
-// firmware/store.cpp keeps them in flash.
+// ---- the saved state in memory, 192 bytes, little-endian, no padding. The saved game itself is GC_SAVE_PARTS parts (gamecore.h): part 0
+// starts with the first 64 bytes of this struct. Version 4 (r4, r5) was this struct whole, with the village in `reserved`; it is still read.
+// The core only exports and imports bytes; firmware/store.cpp keeps them in flash.
 #define GQ_SAVE_SIZE    192
+#define GQ_SAVE_HEAD    188   // size of part 0 of a version 5 saved game
 #define GQ_SAVE_MAGIC   0x444F474Du   // bytes "MGOD": MiniGodus (GeekQuest's is 0x53514747)
-#define GQ_SAVE_VERSION 4
+#define GQ_SAVE_VERSION 5
+#define GQ_SAVE_VERSION_V4 4
 typedef struct {
   uint32_t magic;            //   0
   uint16_t version;          //   4

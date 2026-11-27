@@ -36,6 +36,7 @@ static inline int map_kind(uint8_t b) { return (b & MT_SNOW) ? snow_kind(MT_H(b)
 void world_generate(uint32_t seed, int landform, int climate);
 // landform and climate for a seed, never the same pair as (prev_l, prev_c) (prev_l < 0: no previous world)
 void world_pick(uint32_t seed, int prev_l, int prev_c, int* landform, int* climate);
+void world_pick_hist(uint32_t seed, const uint8_t* hist_land, const uint8_t* hist_clim, int n, int* landform, int* climate);
 int  world_walkable(int tx, int ty);               // 1 if the shaman may stand there
 int  world_flood_area(int tx, int ty);             // walkable tiles connected to (tx, ty)
 uint32_t world_map_hash(void);

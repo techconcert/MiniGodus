@@ -48,10 +48,24 @@ void gc_render_strip(int strip, uint16_t* out);
 
 #include "gq_night.h"   // GC_NIGHT_START_MIN / GC_NIGHT_END_MIN: the built-in night
 
-// ---- persistence (R5). The core does no I/O; firmware/store.cpp keeps the bytes in flash.
-#define GC_SAVE_BYTES 192
+// ---- persistence (R5, full save R6). The core does no I/O; firmware/store.cpp keeps the bytes in flash.
+// The saved game (r6) is GC_SAVE_PARTS parts: part 0 has GC_SAVE_PART0 bytes, every other part GC_SAVE_PARTN. store.cpp writes one part per
+// 320-byte flash slot. Parts hold: 0 header, stocks, statistics; 1 villagers, saplings; 2 buildings; 3-5 the map (see savepack.inc.h).
+#define GC_SAVE_BYTES  192      // the saved game of r4 and r5 (version 4), one block; still accepted by gc_save_import
+#define GC_SAVE_PARTS  6
+#define GC_SAVE_PART0  188
+#define GC_SAVE_PARTN  300
+#define GC_SAVE_TOTAL  (GC_SAVE_PART0 + (GC_SAVE_PARTS - 1) * GC_SAVE_PARTN)
 enum { GC_SAVE_OK = 0, GC_SAVE_ERR_LEN, GC_SAVE_ERR_MAGIC, GC_SAVE_ERR_VERSION, GC_SAVE_ERR_CRC };
-int      gc_save_export(uint8_t* buf, int cap);        // village scene only. Returns GC_SAVE_BYTES, or 0.
+int      gc_save_part_size(int part);                  // bytes of part 0..GC_SAVE_PARTS-1, 0 for anything else
+void     gc_save_begin(void);                          // call once before exporting a record: it gets a new record number
+int      gc_save_export_part(int part, uint8_t* buf, int cap);   // village scene only. Returns the part's size, or 0 (nothing changes the state)
+// Import is part by part: part 0 first (1 = accepted, the world is rebuilt from it; 0 = rejected, nothing changed), then parts 1.., any order,
+// each with its full size (1 = taken, 0 = refused), then gc_save_import_end().
+int      gc_save_import_part(int part, const uint8_t* buf, int len);
+void     gc_save_import_end(void);
+// The same in one block (tests, tools): all parts one after another. Import also accepts a version 4 block of GC_SAVE_BYTES (r4, r5).
+int      gc_save_export(uint8_t* buf, int cap);        // village scene only. Returns GC_SAVE_TOTAL, or 0.
 int      gc_save_import(const uint8_t* buf, int len);  // 1 = accepted, sanitized, applied. 0 = rejected, nothing changed.
 uint32_t gc_save_serial(void);                         // changes whenever the saved state changed
 // Day-1 defaults (same as a first boot).

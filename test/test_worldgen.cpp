@@ -51,7 +51,7 @@ static void test_determinism_and_reach() {
 
 // Same seed after the same previous world gives the same world, and the previous pair is never repeated.
 static void test_no_repeat_and_history() {
-  uint8_t buf[GC_SAVE_BYTES];
+  uint8_t buf[GC_SAVE_TOTAL];
   std::vector<Snap> first;
   for (int run = 0; run < 2; run++) {
     gc_init(GC_SCENE_VILLAGE, 777, 0);
@@ -62,7 +62,7 @@ static void test_no_repeat_and_history() {
       CHECK(!(s.lf == prev.lf && s.cl == prev.cl));
       CHECK(s.area >= 24);
       if (run == 0) first.push_back(s); else CHECK(first[i - 1].hash == s.hash && first[i - 1].name == s.name);
-      CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_BYTES);
+      CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_TOTAL);
       if (i >= 5) {                                               // the save keeps the last 4 worlds, newest first
         CHECK(buf[38] == 4);
         CHECK(rd32(buf + 40) == (uint32_t)gc_query(GQ_Q_SEED));
@@ -78,7 +78,7 @@ static void test_no_repeat_and_history() {
   gc_init(GC_SCENE_VILLAGE, 31, 0);
   gc_new_world(99);
   uint32_t h = (uint32_t)gc_query(GQ_Q_MAP_HASH);
-  CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_BYTES);
+  CHECK(gc_save_export(buf, sizeof buf) == GC_SAVE_TOTAL);
   gc_new_world(12345);
   CHECK((uint32_t)gc_query(GQ_Q_MAP_HASH) != h);
   CHECK(gc_save_import(buf, sizeof buf) == 1);

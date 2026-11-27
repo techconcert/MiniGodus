@@ -10,8 +10,8 @@
 // until no step is left. Everything lives in about 100 bytes; every search uses the shared distance buffer g_dist.
 
 enum { N_FOOD, N_HOUSING, N_WATER, N_HEALTH, N_WOOD, N_GROWTH, N_FAITH, N_MONUMENT, N_POND, N_SHAPE, N_COUNT };
-enum { PK_NONE, PK_BUILD, PK_POND, PK_PLOT, PK_LEVEL };
-enum { SP_POND = B_COUNT, SP_PLOT = B_COUNT + 1, SP_LEVEL = B_COUNT + 2 };      // search kinds besides the buildings
+enum { PK_NONE, PK_BUILD, PK_POND, PK_PLOT, PK_LEVEL, PK_STAGE };
+enum { SP_POND = B_COUNT, SP_PLOT = B_COUNT + 1, SP_LEVEL = B_COUNT + 2, SP_STAGE = B_COUNT + 3 };      // search kinds besides the buildings
 enum { WAIT_MAX = 36, MAX_OPS = 100 };
 
 struct Proj { uint8_t kind, tp, var, x, y, w, h, hgt, ops, wait; };   // hgt 255: no levelling (fishing hut)
@@ -110,7 +110,7 @@ static void proj_failed(int x, int y) { add_fail(x, y); s_cool[s_pneed] = 6; if 
 struct Cand { uint8_t x, y, var, H; int16_t cost, faith; };
 enum { NC = 14, NOSITE = -30000 };
 
-static int nvars(int k) { return k == SP_POND ? 2 : (k == SP_PLOT ? 1 : (k == SP_LEVEL ? 3 : NVAR[k])); }
+static int nvars(int k) { return k == SP_POND ? 2 : (k == SP_PLOT ? 1 : (k == SP_LEVEL ? 3 : (k == SP_STAGE ? 1 : NVAR[k]))); }
 static void kdim(int k, int var, int* w, int* h) {
   if (k == SP_POND) { *w = var ? 3 : 2; *h = var ? 2 : 3; }
   else if (k == SP_PLOT) { *w = *h = 3; }
@@ -455,6 +455,7 @@ static int next_ramp(int sx, int sy, int* tx, int* ty, int* dir) {
 static void finish_project(void) {
   Proj p = P;
   P.kind = PK_NONE; s_has_op = 0; s_ramping = 0;
+  if (p.kind == PK_STAGE) return;
   if (p.kind == PK_PLOT) {
     int slot = 0;
     for (int i = 0; i < 3; i++) if (s_plot[i][0] == 255) { slot = i; break; }
@@ -485,7 +486,10 @@ static void finish_project(void) {
     world_flow(cx(), cy());
     ok = keeps_connected(p.x, p.y, w, h, p.tp == B_FISH);
   }
-  if (ok && lay_site(p.tp, p.var, p.x, p.y, 1) >= 0) return;
+  if (ok && lay_site(p.tp, p.var, p.x, p.y, p.tp == B_MONUMENT ? 0 : 1) >= 0) {
+    if (p.tp == B_MONUMENT) s_mon_day = (uint16_t)(G.s.day >= MON_GAP_DAYS ? G.s.day - MON_GAP_DAYS : 0);      // the first stage may start at once
+    return;
+  }
   s_wood = (uint16_t)(s_wood + cost_wood(p.tp));          // he could not build here: the wood is returned
   proj_failed(p.x, p.y);
 }
@@ -495,6 +499,22 @@ int shaman_target(int sx, int sy, int* tx, int* ty) {
   if (P.kind == PK_NONE) return 0;
   for (int guard = 0; guard < 8; guard++) {
     if (s_has_op) { *tx = s_wx; *ty = s_wy; return 1; }
+    if (P.kind == PK_STAGE) {                              // the monument: he walks beside it and raises the next stage
+      if (P.ops >= 1) { finish_project(); return 0; }
+      world_flow(cx(), cy());
+      int bd = 9999, mx = 0, my = 0;
+      for (int j = 0; j < 3; j++)
+        for (int i = 0; i < 3; i++)
+          if (op_reachable(P.x + i, P.y + j) && iab(P.x + i - sx) + iab(P.y + j - sy) < bd) { bd = iab(P.x + i - sx) + iab(P.y + j - sy); mx = P.x + i; my = P.y + j; }
+      if (bd == 9999) {
+#ifdef MONDBG
+        fprintf(stderr,"unreach sx %d sy %d mon %d,%d reach %d\n",sx,sy,P.x,P.y,count_reach());
+#endif
+        shaman_abort(); return 0; }
+      if (s_faith < (uint16_t)mon_cost(village_mon_stage() + 1)) { s_waiting = 1; return 0; }
+      s_wx = (uint8_t)mx; s_wy = (uint8_t)my; s_wd = 2; s_has_op = 1;
+      continue;
+    }
     int x = 0, y = 0, d = 0, found = 0;
     world_flow(sx, sy);                                   // which tiles can he stand beside?
     if (P.ops < MAX_OPS && next_terra(sx, sy, &x, &y, &d)) { found = 1; s_ramping = 0; }
@@ -538,6 +558,19 @@ void shaman_apply(void) {
   if (!s_has_op) return;
   s_has_op = 0;
   if (P.kind == PK_NONE) return;
+  if (P.kind == PK_STAGE) {                                // the next monument stage rises
+    int b = mon_b();
+    if (b >= 0 && B[b].st < 5 && s_faith >= (uint16_t)mon_cost(B[b].st + 1)) {
+      int c = mon_cost(B[b].st + 1);
+      s_faith = (uint16_t)(s_faith - c); s_spent += (uint32_t)c; s_casts++;
+      B[b].st++;
+      s_mon_day = G.s.day;
+      if (B[b].st == 5) s_built_tot++;
+      for (int j = 0; j < 3; j++) for (int i = 0; i < 3; i++) mark_tile(B[b].x + i, B[b].y + j);
+    }
+    P.ops++;
+    return;
+  }
   apply_tile(s_wx, s_wy, s_wd, 0);
   P.ops++;
   if (s_ramping && s_wd != 0) {
@@ -565,7 +598,7 @@ static void heal_terrain(void) {
 }
 
 // ------------------------------------------------------------------ needs and projects
-static const char* const BNAME[B_COUNT] = {"TENT", "HUT", "COTTAGE", "MANOR", "FIELD", "ORCHARD", "PEN", "FISHING HUT", "WELL", "LUMBER HUT", "GRANARY", "SHRINE", "INFIRMARY"};
+static const char* const BNAME[B_COUNT] = {"TENT", "HUT", "COTTAGE", "MANOR", "FIELD", "ORCHARD", "PEN", "FISHING HUT", "WELL", "LUMBER HUT", "GRANARY", "SHRINE", "INFIRMARY", "MONUMENT"};
 const char* shaman_label(void) {
   static char buf[28];
   if (P.kind == PK_NONE) return 0;
@@ -573,6 +606,15 @@ const char* shaman_label(void) {
   if (P.kind == PK_PLOT) return s_ramping ? "CUTTING RAMPS" : "FLATTENING PLOT";
   if (P.kind == PK_LEVEL) return s_ramping ? "CUTTING RAMPS" : "LEVELLING LAND";
   if (s_ramping) return "CUTTING RAMPS";
+  if (P.kind == PK_STAGE) {
+    static const char* const MN[5] = {"PYRAMID", "STONE CIRCLE", "GREAT TREE", "OBELISK", "TEMPLE"};
+    const char* r = "RAISING THE ";
+    int k = 0;
+    for (; r[k]; k++) buf[k] = r[k];
+    for (const char* q = MN[village_mon_type()]; *q && k < 26; q++) buf[k++] = *q;
+    buf[k] = 0;
+    return buf;
+  }
   const char* a = "BUILDING ";
   int n = 0;
   for (; a[n]; n++) buf[n] = a[n];
@@ -584,6 +626,14 @@ const char* shaman_label(void) {
 // 1 started, 0 nothing possible, 2 not enough faith (the wood is there)
 static int start_project(int k, int nolevel_unused) {
   (void)nolevel_unused;
+  if (k == SP_STAGE) {
+    int b = mon_b();
+    if (b < 0 || B[b].st >= 5 || s_faith < (uint16_t)mon_cost(B[b].st + 1)) return 0;
+    P.kind = PK_STAGE; P.tp = B_MONUMENT; P.var = 0; P.x = B[b].x; P.y = B[b].y; P.w = P.h = 3; P.hgt = 255; P.ops = 0; P.wait = 0;
+    s_has_op = 0; s_ramping = 0;
+    for (int i = 0; i < NFAIL; i++) s_skip[i][0] = s_skip[i][1] = 255;
+    return 1;
+  }
   if (k < B_COUNT && s_wood < (uint16_t)cost_wood(k)) return 0;
   Cand c;
   if (!pick_site(k, &c, 0)) return 0;
@@ -600,7 +650,17 @@ static int start_project(int k, int nolevel_unused) {
 
 // health: the first villager who falls sick (real sickness, not hunger) calls for an infirmary. A hook for r6: the monument's spare faith
 static int need_health(int weak) { (void)weak; return s_sick && bcount(B_INFIRM, 1) == 0 ? 110 : 0; }
-static int need_monument(void) { return 0; }
+// the monument: laid out when the town is big enough, then raised in five stages, one every MON_GAP_DAYS days at the most, each paid for in faith
+static int mon_open(void) { return pop() >= unlock_pop(B_MONUMENT) && G.s.day >= MON_MIN_DAY; }
+static int mon_saving(void) { int b = mon_b(); return s_phase == PH_PLAY && b >= 0 && B[b].st < 5 && mon_open(); }
+static int need_monument(void) {
+  if (s_phase != PH_PLAY) return 0;
+  int b = mon_b();
+  if (b < 0) return pop() >= 10 && G.s.day >= 5 && s_wood >= (uint16_t)cost_wood(B_MONUMENT) ? 62 : 0;      // the plot is marked out early, while there is room
+  int st = B[b].st;
+  if (st >= 5 || !mon_open() || G.s.day < s_mon_day + MON_GAP_DAYS || s_faith < (uint16_t)mon_cost(st + 1)) return 0;
+  return 98;
+}
 
 static int water_far(void) {            // some home has no water within 8 tiles
   flow_key(K_WATER);
@@ -651,6 +711,9 @@ static int mend(void) {
 }
 
 static void shaman_plan(void) {
+#ifdef MONDBG
+  { static int ld=-1; if (G.s.day>=22 && G.s.day!=ld) { ld=G.s.day; int b=mon_b(); fprintf(stderr,"day %d P.kind %d wait %d pop %d mon_b %d st %d need %d gap %d aborts %d faith %d open %d\n",G.s.day,P.kind,s_waiting,pop(),b,b<0?-1:B[b].st,need_monument(),(int)s_mon_day,(int)s_aborts,s_faith,mon_open()); } }
+#endif
   for (int i = 0; i < N_COUNT; i++) if (s_cool[i]) s_cool[i]--;
   if (P.kind != PK_NONE) {
     if (s_waiting && ++P.wait > WAIT_MAX) { shaman_abort(); s_waiting = 0; }
@@ -682,7 +745,7 @@ static void shaman_plan(void) {
   if (p >= 6 && bcount(B_SHRINE, 1) == 0) sc[N_FAITH] = 45;
   sc[N_MONUMENT] = need_monument();
   // spare faith is put into the land: wide flat ground for the next tiers, a second pond for fish (r6 will keep a reserve for the monument)
-  if (s_faith * 5 >= (uint16_t)(60 + 4 * p) * 2) sc[N_SHAPE] = 30;
+  if (s_faith * 5 >= (uint16_t)(60 + 4 * p) * 2 && !mon_saving()) sc[N_SHAPE] = 30;
   // personality
   switch (s_pers) {
     case SH_FARMER: sc[N_FOOD] += sc[N_FOOD] ? 10 : 0; break;
@@ -692,7 +755,7 @@ static void shaman_plan(void) {
   }
   int tried = 0, saving = 0;
   for (int round = 0; round < N_COUNT; round++) {
-    int best = -1, bs = 29;
+    int best = -1, bs = mon_saving() ? 59 : 29;           // raising the monument: only what is needed comes before it
     for (int i = 0; i < N_COUNT; i++) if (!(tried & (1 << i)) && !s_cool[i] && sc[i] > bs) { bs = sc[i]; best = i; }
     if (best < 0) break;
     tried |= 1 << best;
@@ -725,6 +788,7 @@ static void shaman_plan(void) {
         else ks[n++] = B_GRANARY;
         break;
       case N_FAITH: ks[n++] = B_SHRINE; break;
+      case N_MONUMENT: ks[n++] = mon_b() < 0 ? (int)B_MONUMENT : (int)SP_STAGE; break;
       case N_SHAPE:
         if (saving) continue;
         if (p >= 8 && s_ponds < 2 && s_faith >= 40) ks[n++] = SP_POND;

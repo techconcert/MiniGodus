@@ -6,8 +6,10 @@
 #include "world.h"
 
 enum { MAXV = 48, MAXB = 40 };
+// the arc of a world (r6): playing; the worship day of the finished monument; the village is gone (a short beat); the summary screens
+enum { PH_PLAY, PH_WORSHIP, PH_DYING, PH_DONE, PH_EXTINCT };
 enum { R_CHILD, R_FARMER, R_HERDER, R_FISHER, R_LUMBER, R_BUILDER, R_HEALER, R_CARRIER, R_ELDER, R_IDLE, R_COUNT };
-enum { B_TENT, B_HUT, B_COTTAGE, B_MANOR, B_FIELD, B_ORCHARD, B_PEN, B_FISH, B_WELL, B_LUMBER, B_GRANARY, B_SHRINE, B_INFIRM, B_COUNT };
+enum { B_TENT, B_HUT, B_COTTAGE, B_MANOR, B_FIELD, B_ORCHARD, B_PEN, B_FISH, B_WELL, B_LUMBER, B_GRANARY, B_SHRINE, B_INFIRM, B_MONUMENT, B_COUNT };
 enum { SH_FARMER, SH_HERDER, SH_FISHER, SH_BUILDER };       // the shaman's personality in this world
 enum { AGE_CHILD, AGE_ADULT, AGE_ELDER };
 // what a villager is doing
@@ -22,8 +24,19 @@ void village_new_day(int night);                   // midnight: ageing, births
 void village_tick(uint32_t dt, int night);         // movement, animation
 void village_draw(uint16_t* out, int wx0, int wy0);
 int  village_stat(int which);                      // GQ_Q_* style numbers, see village.cpp
-void village_pack(uint8_t* p);                     // 128 bytes for GqSave.reserved
-void village_unpack(const uint8_t* p);             // total: any bytes leave a valid village
+void village_unpack(const uint8_t* p);             // r4/r5 saved game (128 bytes of GqSave.reserved); total: any bytes leave a valid village
+// r6 full save: village_pack_part(k) writes part k (k >= 1) of the saved game (see save.cpp for the layout), village_unpack_part(k) reads it back
+// into the live state without checking it; village_unpack_end() makes whatever was read consistent (total).
+int  village_pack_part(int part, uint8_t* p, int cap);       // bytes written, 0 if part is not one of the village's
+void village_unpack_part(int part, const uint8_t* p);
+void village_unpack_end(void);
+void village_pack_head(uint8_t* p);                          // the village's share of part 0 (GC_SAVE_VILLAGE_HEAD bytes)
+void village_unpack_head(const uint8_t* p);
+int  village_phase(void);                                    // PH_*
+int  village_mon_stage(void);                                // 0 none or not started .. 5 finished
+int  village_mon_type(void);                                 // 0 pyramid, 1 stone circle, 2 great tree, 3 obelisk, 4 temple
+int  village_mon_pos(int* x, int* y);                        // 1 and the top left tile of the monument
+void village_end_world(int phase);                           // debug: PH_WORSHIP now, PH_DONE or PH_EXTINCT
 void village_debug(int cmd, int32_t arg);
 
 // The shaman as decision maker (r4, shaman.inc.h inside village.cpp). godus.cpp walks him and plays the animation.
