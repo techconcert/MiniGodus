@@ -110,6 +110,25 @@ static void test_bars() {
   CHECK(band != 0 || true);
 }
 
+// r7: the worst case of the top bar: 4 digits of faith and 2 of population (then 3 of food and of wood) with the temperature at -10 C: the clock
+// keeps its own columns (the counters end before x = 114, the clock starts at x = 119, so columns 114 to 118 stay empty)
+static void test_bar_fit() {
+  sim_start(3);
+  gc_set_live_weather(GQ_W_SNOW, -100, 0);
+  gc_set_clock(10, 0, 1);
+  gc_debug(GQ_DBG_ADD_VILLAGERS, 46);
+  gc_debug(GQ_DBG_FAITH, 9999); gc_debug(GQ_DBG_FOOD, 999); gc_debug(GQ_DBG_WOOD, 999);
+  for (int k = 0; k < 20; k++) {                       // 10 seconds: both pairs come up
+    for (int i = 0; i < 2; i++) gc_tick(250);
+    gc_debug(GQ_DBG_FAITH, 9999); gc_debug(GQ_DBG_FOOD, 999); gc_debug(GQ_DBG_WOOD, 999);
+    gqt::render_strip_guarded(0);
+    uint16_t bg = gqt::strip[GC_W - 1 + 15 * GC_W];
+    int left_end = 0;
+    for (int x = 0; x < 114 + 5; x++) for (int y = 0; y < 16; y++) if (gqt::strip[y * GC_W + x] != bg) left_end = x;
+    CHECK(left_end <= 113);                              // nothing in columns 114 to 118: the counters do not reach the clock, the clock does not reach them
+  }
+}
+
 int main() {
   test_live_weather_input();
   test_sleep_option();
@@ -118,6 +137,7 @@ int main() {
   test_walk();
   test_seed();
   test_bars();
+  test_bar_fit();
   std::printf("test_scene: all passed\n");
   return 0;
 }

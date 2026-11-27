@@ -1072,19 +1072,40 @@ def b_site(stage):
     return c.p
 
 
-def b_ramp():
-    """A cut ramp: a packed earth wedge with steps, drawn over the cliff face."""
+def b_ramp(vertical=True):
+    """A cut ramp (r7): a packed earth staircase between two layers, drawn over the cliff face and the tile edge.
+    vertical: the way leads north-south (treads run across, narrow at the top = the high end); else east-west (treads run up and down)."""
     c = Big(16, 16)
-    for y in range(0, 16):
-        half = 3 + y * 5 // 15
-        for x in range(8 - half, 8 + half):
-            c.set(x, y, 6 if (y // 4) % 2 == 0 else 7)
-    for y in (3, 7, 11, 15):
-        for x in range(8 - (3 + y * 5 // 15), 8 + (3 + y * 5 // 15)):
-            c.set(x, y, 13)
-    for y in range(0, 16):
-        half = 3 + y * 5 // 15
-        c.set(8 - half, y, 15); c.set(8 + half - 1, y, 15)
+    if vertical:
+        for y in range(1, 16):
+            half = 5 + y * 3 // 15
+            for x in range(8 - half, 8 + half):
+                step = (y - 1) // 4
+                c.set(x, y, 6 if step % 2 == 0 else 7)
+            for x in range(8 - half, 8 + half):
+                if (y - 1) % 4 == 3:
+                    c.set(x, y, 13)                       # the riser: dark earth under each tread
+            c.set(8 - half, y, 15); c.set(8 + half - 1, y, 15)
+        for x in range(3, 13):
+            c.set(x, 0, 15)
+        for y in (1, 5, 9, 13):                           # a bright lip on every tread
+            half = 5 + y * 3 // 15
+            for x in range(8 - half + 1, 8 + half - 1):
+                c.set(x, y, 5)
+    else:
+        for x in range(1, 15):
+            step = (x - 1) // 4
+            for y in range(2, 14):
+                c.set(x, y, 6 if step % 2 == 0 else 7)
+                if (x - 1) % 4 == 3:
+                    c.set(x, y, 13)
+            for y in range(3, 13):
+                if (x - 1) % 4 == 0:
+                    c.set(x, y, 5)
+        for x in range(0, 16):
+            c.set(x, 2, 15); c.set(x, 13, 15)
+        for y in range(2, 14):
+            c.set(0, y, 15); c.set(15, y, 15)
     return c.p
 
 
@@ -1107,7 +1128,7 @@ def build_village():
     add("ORCHARD", [b_orchard(0), b_orchard(1), b_orchard(2)])
     add("FENCE", [b_fence(k) for k in range(9)])
     add("ANIMAL", [b_animal(k, f) for k in range(3) for f in range(2)])
-    add("RAMP", [b_ramp()])
+    add("RAMP", [b_ramp(True), b_ramp(False)])
 
     def grid(name, wt, ht, kind):
         img = house(wt, ht, kind)

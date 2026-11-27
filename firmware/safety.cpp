@@ -56,7 +56,8 @@ static const uint32_t AP_GRACE_MS = 10UL * 60 * 1000;  // AP stays up 10 min aft
 // RECOVERY-CHANGE (chunk1): revision 2 = chunk 1 (design 8.10 rule 6); 3 = R2 (no game saving, automatic restarts on)
 // RECOVERY-CHANGE (R3-0F): revision 5 = R3 plumbing (web() accessor, webout.h, weather strike words, boot kind, spare sector probe)
 // RECOVERY-CHANGE (r6): revision 12 = the config page gets a "New world" button and POST /config/world (the store keeps whole games)
-static const uint32_t GQ_RECOVERY_REV = 12;
+// RECOVERY-CHANGE (r7): revision 13 = the update page gets a "Switch game mode" box (GeekQuest, GeekQuestAI); page text and script only, no new route
+static const uint32_t GQ_RECOVERY_REV = 13;
 // RECOVERY-CHANGE (chunk1): timers of the restart gates
 static const uint32_t SLOW_STABLE_MS = 6UL * 3600 * 1000;   // `slow` counter cleared after 6 h of uptime
 static const uint32_t AUTO_MIN_UPTIME_MS = 30UL * 60 * 1000;
@@ -365,7 +366,9 @@ current firmware running. Keep the clock powered for 60 seconds after it says In
 static const char PAGE_UPDATE_FORCE[] PROGMEM = R"HTML(<p><label><input type="checkbox" id="force"> Install anyway (skip the check that the file contains the MiniGodus update page)</label></p>)HTML";
 #endif
 static const char PAGE_UPDATE_B[] PROGMEM = R"HTML(<button id="go" disabled>Upload and install</button><p><progress id="p" max="100" value="0" hidden></progress></p>
-<p id="msg"></p></div><p><a href="/">Back</a></p>
+<p id="msg"></p></div>
+<div class="box"><h3>Switch game mode</h3><p>Install a different game on this clock. Your saved game does not carry over: the other game starts fresh, and the MiniGodus world is lost.</p>
+<p id="gm"></p><p id="gmm"></p></div><p><a href="/">Back</a></p>
 <script>
 const f=document.getElementById('f'),go=document.getElementById('go'),chk=document.getElementById('chk'),cr=document.getElementById('crc'),msg=document.getElementById('msg'),p=document.getElementById('p');
 let free=0,crc='',n=0;fetch('/info').then(r=>r.json()).then(j=>{free=j.free_ota_bytes});
@@ -399,7 +402,22 @@ ck.onclick=async()=>{up.className='';up.textContent='Checking GitHub...';
    try{const r=await fetch(R+j.bin);if(!r.ok)throw 0;const a=await r.arrayBuffer();up.textContent='Downloaded '+a.byteLength+' bytes. Check the result above, then press Upload and install.';
     pick(new File([a],j.bin.split('/').pop()))}catch(e){up.className='warn';up.textContent='Download failed. Try again or choose the file by hand.'}}
  }catch(e){up.className='warn';up.textContent='Could not reach GitHub from this browser. Choose the file by hand.'}};
-</script>)HTML";
+</script>
+<script>try{
+const G=[['GeekQuest','techconcert/GeekQuest'],['GeekQuestAI','techconcert/GeekQuestAI']],gm=document.getElementById('gm'),gt=document.getElementById('gmm');
+G.forEach(g=>{const b=document.createElement('button');b.type='button';b.textContent=g[0];gm.append(b,' ');
+ b.onclick=async()=>{gt.className='';gt.textContent='Checking '+g[0]+'...';
+  try{const u='https://raw.githubusercontent.com/'+g[1]+'/builds/',j=await(await fetch(u+'latest.json?'+Date.now(),{cache:'no-store'})).json(),cur=(await(await fetch('/info')).json()).version;
+   if(cur.indexOf(j.commit)>=0){gt.className='ok';gt.textContent=g[0]+' '+j.version+' is already running.';return}
+   gt.textContent=g[0]+' '+j.version+' ('+j.commit+'). Your saved game will not carry over. ';
+   const c=document.createElement('button');c.type='button';c.textContent='Switch to '+g[0]+' '+j.version;gt.append(c);
+   c.onclick=async()=>{c.disabled=true;gt.textContent='Downloading '+g[0]+'...';
+    try{const r=await fetch(u+j.bin);if(!r.ok)throw 0;const a=await r.arrayBuffer();pick(new File([a],j.bin.split('/').pop()));
+     for(let i=0;i<80&&!cr.textContent;i++)await new Promise(r=>setTimeout(r,100));
+     if(go.disabled||chk.className!=='ok')throw 1;gt.textContent='Installing '+g[0]+'... do not unplug the clock.';go.click()}
+    catch(e){gt.className='warn';gt.textContent=e===1?'The file failed the checks above. Nothing was installed.':'Download failed. Nothing was installed.'}}
+  }catch(e){gt.className='warn';gt.textContent='Could not reach GitHub from this browser.'}}});
+}catch(e){}</script>)HTML";
 
 static const char PAGE_WIFI[] PROGMEM = R"HTML(<h2>WiFi setup</h2><div class='box'><form method='post' action='/wifi'>
 Network name<input name='ssid' maxlength='32'>Password<input name='pass' type='password' maxlength='64'>

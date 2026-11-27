@@ -1,6 +1,6 @@
 """Builds tools/shots.cpp with the real game core and writes the README screenshots to docs/screenshots/.
 
-    python tools/make_screenshots.py            # needs g++ and Pillow (add --r6 for the r6 pictures only)
+    python tools/make_screenshots.py            # needs g++ and Pillow (add --r6 or --r7 for the pictures of one release only)
 Each landform gets an overview of the whole 512x512 map (the camera moved over it) and the 240x240 screen of the clock.
 """
 import os
@@ -82,9 +82,33 @@ def r6_shots():
     shot("screen", os.path.join(OUT, "town-day35.png"), 11, 0, 0, 0, 2, 34 * 1440 + 300, "town")
 
 
+def r7_shots():
+    # r7: the two top bar pairs (faith + population, then food + wood; the pair changes every 3.5 s: 4 s after the start it is the first pair,
+    # 1 s after the start the second), villagers walking a ramp (mode r: run on until somebody is on one), the shaman cutting a ramp
+    # (mode R) and a terraced village (the town on day 20 of a mountain plateau).
+    for name, ticks in (("a", 4), ("b", 1)):
+        _bar = os.path.join(OUT, "_bar.png")
+        shot("screen", _bar, 11, 0, 0, ticks, 1, 2 * 1440 + 300, "", 400, "pop=20")
+        Image.open(_bar).crop((0, 0, 240, 16)).resize((720, 48), Image.NEAREST).save(os.path.join(OUT, f"topbar-pair-{name}.png"))
+        os.remove(_bar)
+    # the worst case for the clock: 4 digits of faith, 2 of population, -10 C (the unit is left out of three characters)
+    _bar = os.path.join(OUT, "_bar.png")
+    shot("screen", _bar, 11, 0, 0, 4, 1, 2 * 1440 + 300, "", 9999, "pop=46,w0,t-100,lead=60")
+    Image.open(_bar).crop((0, 0, 240, 16)).resize((720, 48), Image.NEAREST).save(os.path.join(OUT, "topbar-worst-case.png"))
+    os.remove(_bar)
+    shot("screen", os.path.join(OUT, "ramp-villagers.png"), 21, 5, 2, 0, 2, 300, "r", 200, "Fv")
+    shot("screen", os.path.join(OUT, "ramp-shaman.png"), 11, 0, 0, 0, 2, 300, "R", 200, "Fv")
+    shot("screen", os.path.join(OUT, "terraced-village.png"), 41, 5, 0, 0, 2, 19 * 1440 + 300, "town")
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     build()
+    if "--r7" in sys.argv:             # only the r7 pictures
+        r7_shots()
+        os.remove(EXE)
+        print("wrote the r7 pictures to", OUT)
+        return
     if "--r6" in sys.argv:             # only the r6 pictures
         r6_shots()
         os.remove(EXE)
@@ -120,6 +144,7 @@ def main():
     for name, seed, lf, cl, minutes, mode, boost, tokens in R5_SHOTS:
         shot("screen", os.path.join(OUT, name + ".png"), seed, lf, cl, 0, 2, minutes, mode, boost, tokens)
     r6_shots()
+    r7_shots()
     os.remove(EXE)
     print("wrote", OUT)
 

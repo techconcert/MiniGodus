@@ -126,6 +126,7 @@ static int  sap_kind(uint16_t e) { return (e >> 13) & 1; }          // 0 stump, 
 static uint16_t sap_pack(int x, int y, int age, int kind) { return (uint16_t)(x | (y << 5) | (age << 10) | (kind << 13)); }
 
 static int count_trees(void) { int n = 0; for (int i = 0; i < WM * WM; i++) if (MT_OBJ(g_map[i]) == OB_TREE && MT_H(g_map[i]) >= 2) n++; return n; }
+static int trees_low(void) { return count_trees() <= TREE_FLOOR; }
 static int count_saps(int kind) { int n = 0; for (int k = 0; k < SAP_N; k++) if (s_sap[k] != 0xFFFF && (kind < 0 || sap_kind(s_sap[k]) == kind)) n++; return n; }
 static int sap_find(int x, int y) { for (int k = 0; k < SAP_N; k++) if (s_sap[k] != 0xFFFF && sap_x(s_sap[k]) == x && sap_y(s_sap[k]) == y) return k; return -1; }
 static int sap_put(int x, int y, int age, int kind) {
@@ -221,6 +222,7 @@ static void nature_minute(void) {
     if (age < need) continue;
     s_gi = (uint8_t)((k + 1) % SAP_N);
     if (!sap_ok(x, y)) { s_sap[k] = 0xFFFF; return; }
+    if (villager_at(x, y)) return;                              // r7: not on somebody's head, next minute
     uint8_t b = g_map[y * WM + x];
     world_flow(cx(), cy());
     int base = count_reach(), fr = g_dist[y * WM + x] != 255 ? 1 : 0;

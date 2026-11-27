@@ -163,6 +163,23 @@ int main(int argc, char** argv) {
         }
       }
     }
+    if (mode[0] == 'r' || mode[0] == 'R') {          // r7: run on until villagers are on a ramp (r) or the shaman cuts one (R), camera over it
+      bool done = false;
+      for (int m = 0; m < 12 * 1440 && !done; m++) {
+        wall = (wall + 1) % 1440; gc_set_clock(wall / 60, wall % 60, 1);
+        for (int i = 0; i < 8 * 2 && !done; i++) {
+          gc_tick(250);
+          if (mode[0] == 'R') {
+            if (gc_query(GQ_Q_HERO_ACT) == GQ_ACT_CAST && vq(19) == 6) { gc_tick(300); look_at(((int)gc_query(GQ_Q_SHAMAN_X) + 8) >> 4, ((int)gc_query(GQ_Q_SHAMAN_Y) + 8) >> 4); gc_debug(GQ_DBG_BAND, 5); done = true; }
+          } else {
+            int on = 0, rx = 0, ry = 0;
+            for (int k = 0; k < 48; k++) { int v = vq(60 + k); if (v < 0) continue; int x = v & 255, y = (v >> 8) & 255; if (world_ramp_used(x, y)) { on++; rx = x; ry = y; } }
+            if (on >= (tk.pop > 20 ? 2 : 1) && ((vq(60 + 0) >= 0) || true)) { look_at(rx, ry); done = true; }
+          }
+        }
+        if (m % 60 == 0) gc_debug(GQ_DBG_FAITH, (int)gc_query(GQ_Q_VILLAGE + 3) + (boost ? boost : 100));
+      }
+    }
     if (mode[0] == 'c' || mode[0] == 'p') {          // run on until the picture is there
       for (int m = 0; m < 6 * 1440; m++) {
         if (mode[0] == 'c' && gc_query(GQ_Q_HERO_ACT) == GQ_ACT_CAST) break;

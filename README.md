@@ -5,7 +5,9 @@ spends the faith that villagers produce to reshape the land and to lay out homes
 workshops. You never press anything: it is a clock with a little world in it. The full plan is in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-**Status: release r6, the monument and the end of the world.** A world now has an arc. The village grows to a town, the shaman raises a
+**Status: release r7, height-aware walking, a two-resource top bar and Switch Game Mode.** Nobody walks over a cliff any more: villagers and the shaman move only between equal layers or across ramps, and the shaman cuts ramps (CUTTING RAMPS) wherever the village needs a way between layers. The top bar shows two resources at a time (faith and population, then food and wood). The update page can switch the clock to GeekQuest or GeekQuestAI. Release r6 before it:
+
+**Release r6, the monument and the end of the world.** A world now has an arc. The village grows to a town, the shaman raises a
 monument in five stages with the faith the villagers have to spare, and when it is finished the next day is the worship day: everybody
 gathers at the monument from dawn to dusk. Then a summary of the world (days, peak population, births, deaths, buildings) stays on the
 screen until the next morning, and a new world starts from a new seed, very different from the last. The whole game is saved to flash
@@ -294,6 +296,29 @@ out if needed, no faith asked), `GQ_DBG_PHASE` (1 worship day now, 3 summary, 4 
 **Memory and size.** The game core grows by 136 bytes of static RAM (stats, fish stocks, 3 new counters); the firmware's save code uses
 fewer (the one 320-byte slot buffer, a 112-byte copy of the two settings records and a 36-byte scan table instead of 180). The monument art is
 192 new 16x16 cells (row-deduplicated into `assets_gen.h`). See the build report of the release for the firmware size (cap 470 KB).
+
+## Ramps, the top bar and Switch Game Mode (r7)
+
+Height-aware walking: a step is allowed between equal layers, or between neighbouring layers when one of the two tiles is a ramp. The shaman cuts ramps (2 faith each) where the village needs access, and a village or a loaded game gets them free. Ramps are drawn as a stair; the figure walks along it.
+
+| Villagers on a ramp (snow) | The shaman cutting a ramp |
+|---|---|
+| ![](docs/screenshots/ramp-villagers.png) | ![](docs/screenshots/ramp-shaman.png) |
+
+A terraced village, routing around cliffs by its ramps:
+
+![](docs/screenshots/terraced-village.png)
+
+The top bar shows two resources, alternating every 3.5 seconds:
+
+![](docs/screenshots/topbar-pair-a.png)
+![](docs/screenshots/topbar-pair-b.png)
+
+The worst case, 4 digits of faith, 2 of population and -10 C:
+
+![](docs/screenshots/topbar-worst-case.png)
+
+Switch Game Mode (the update page, under Firmware update): the buttons GeekQuest and GeekQuestAI make your browser read that game's `latest.json` on its `builds` branch and show its version; a second button, Switch to <game> <version>, downloads the `.bin`, checks it and installs it through the usual `/update` upload. Your saved MiniGodus world does not carry over.
 
 ## Hardware
 

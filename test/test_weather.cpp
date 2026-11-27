@@ -486,7 +486,7 @@ static void test_lightning() {
   weather(GQ_W_STORM, 120);
   run(wall, 2);
   gc_debug(GQ_DBG_SET_CAM, 100 + 1024 * 100);
-  for (int i = 0; i < 4; i++) gc_tick(100);
+  for (int i = 0; i < 40; i++) gc_tick(100);                              // let the view settle before comparing frames
   uint32_t calm[GC_ROWS], flash[GC_ROWS];
   gc_debug(GQ_DBG_FLASH, 0);
   gc_tick(1);            // flash is on

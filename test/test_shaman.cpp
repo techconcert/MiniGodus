@@ -112,7 +112,10 @@ static void test_twenty_days() {
   CHECK(grew >= 18);                              // the population grows
   CHECK(total_built >= 20 * 5);
   CHECK(pers.size() == 4);                        // every personality turns up
-  CHECK(bad <= 20 * 2);                           // slopes are mended (a tile pulled both ways is left alone)
+  // r7: a cliff of two layers or more beside the village is a terrace now (people go round it over ramps, test_move checks that nobody crosses one);
+  // the shaman still mends the steps he works near; the terrace rule allows a few of them per world, not a wall of cliffs
+  CHECK(bad <= 20 * 6);
+  CHECK(world_audit_get(2) == 0);                 // no recorded step of any villager or the shaman crossed a cliff or entered a tile nobody can stand on
 }
 
 // ------------------------------------------------------------------------------------------------ every building type

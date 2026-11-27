@@ -9,7 +9,7 @@
 GqState G;
 uint8_t g_wframe;
 
-enum { BAND_STRIP = GC_ROWS - 1, MAP_STRIPS = 0x3FFE /* strips 1..13 */, MOVE_MS = 25, WATER_MS = 600, BAND_MS = 3000, HUD_ALT_MS = 3000,
+enum { BAND_STRIP = GC_ROWS - 1, MAP_STRIPS = 0x3FFE /* strips 1..13 */, MOVE_MS = 25, WATER_MS = 600, BAND_MS = 3000, HUD_ALT_MS = 3500,
        CAM_W = GC_W, CAM_H = 13 * GC_STRIP_H };
 
 struct Shaman { int16_t x, y; uint8_t dir, step, moved, act, abed; };
@@ -35,6 +35,7 @@ static uint8_t  s_imp;                           // a saved game is being import
 static const uint8_t HUD_STAT[4] = {3, 1, 2, 0};
 
 void world_cam(int* x, int* y) { *x = s_cam_x; *y = s_cam_y; }
+void world_shaman_tile(int* x, int* y) { *x = (s_sh.x + 8) >> 4; *y = (s_sh.y + 8) >> 4; if (*x < 0) *x = 0; if (*y < 0) *y = 0; if (*x >= WM) *x = WM - 1; if (*y >= WM) *y = WM - 1; }
 
 static int  bed_tx(void) { return g_world.start_x; }
 static int  bed_ty(void) { return g_world.start_y; }
@@ -240,6 +241,7 @@ static void begin_step(void) {
     if (g_dist[ny * WM + nx] == d - 1 && world_step_ok(tx, ty, nx, ny)) best = dd;
   }
   if (best < 0) { s_walking = 0; return; }
+  world_audit_step(tx, ty, tx + D[best][0], ty + D[best][1]);
   s_mx = (int16_t)((tx + D[best][0]) * GC_TILE); s_my = (int16_t)((ty + D[best][1]) * GC_TILE);
   s_sh.dir = (uint8_t)best;
   s_moving = 1;
@@ -315,9 +317,15 @@ void world_tick(uint32_t dt) {
       if (!s_moving) {
         {   // the ground may have been taken from under his feet (a new building, a pond)
           int tx = s_sh.x >> 4, ty = s_sh.y >> 4, ox, oy;
-          if (!world_walkable(tx, ty) && !s_going_to_bed && world_nearest_walkable(tx, ty, &ox, &oy)) {
+          if (!world_walkable(tx, ty) && !s_going_to_bed) {
+            if (!world_nearest_connected(tx, ty, bed_tx(), bed_ty(), &ox, &oy)) { ox = bed_tx(); oy = bed_ty(); }
+            world_audit_jump(((s_sh.x >> 4) > ox ? (s_sh.x >> 4) - ox : ox - (s_sh.x >> 4)) + ((s_sh.y >> 4) > oy ? (s_sh.y >> 4) - oy : oy - (s_sh.y >> 4)));
             s_sh.x = (int16_t)(ox * GC_TILE); s_sh.y = (int16_t)(oy * GC_TILE); s_walking = 0; s_work = 0; g_dirty |= MAP_STRIPS;
           }
+        }
+        if (shaman_stuck()) {                       // walled in (a pocket no ramp can open): back to the green, the one jump he makes
+          world_audit_jump(9);
+          s_sh.x = (int16_t)(bed_tx() * GC_TILE); s_sh.y = (int16_t)(bed_ty() * GC_TILE); s_walking = 0; s_work = 0; g_dirty |= MAP_STRIPS;
         }
         if (s_going_to_bed) {
           int tx = s_sh.x >> 4, ty = s_sh.y >> 4;
@@ -350,6 +358,7 @@ void world_tick(uint32_t dt) {
               // maybe he is shut in a pocket the village cannot reach: he steps back to his bed and tries again
               world_flow(bed_tx(), bed_ty());
               if (g_dist[(s_sh.y >> 4) * WM + (s_sh.x >> 4)] == 255) {
+                world_audit_jump(9);
                 s_sh.x = (int16_t)(bed_tx() * GC_TILE); s_sh.y = (int16_t)(bed_ty() * GC_TILE); s_walking = 0; g_dirty |= MAP_STRIPS;
               }
               if (!walk_beside(tx, ty)) { shaman_abort(); s_work = 0; s_pause = 400; }
@@ -384,7 +393,7 @@ void world_tick(uint32_t dt) {
   }
 
   s_hud_acc += dt;
-  if (s_hud_acc >= HUD_ALT_MS) { s_hud_acc -= HUD_ALT_MS; s_hud_alt = (uint8_t)((s_hud_alt + 1) & 3); g_dirty |= 1u; }
+  if (s_hud_acc >= HUD_ALT_MS) { s_hud_acc -= HUD_ALT_MS; s_hud_alt = (uint8_t)((s_hud_alt + 1) & 1); g_dirty |= 1u; }
 
   s_band_acc += dt;
   if (s_band_acc >= BAND_MS) {
@@ -457,11 +466,10 @@ static int put_num(char* p, int n) {      // 0..9999
   return k;
 }
 
-// Left: one of the four counters at a time, as tall as the clock: the 8x8 icon doubled to 16x16 and digits of the
-// clock's size. They cycle every 3 s: faith, population, food, wood.
-static void draw_counters(uint16_t* out, int y0) {
-  static const uint8_t ORDER[4] = {0, 3, 1, 2};         // icon ids: 0 faith, 1 food, 2 wood, 3 population
-  int id = ORDER[s_hud_alt & 3];
+// Left (r7): two counters at a time, each as tall as the clock: the 8x8 icon doubled to 16x16 and digits of the clock's size. The pairs
+// alternate every 3.5 s: faith and population, then food and wood. 9999 faith and 48 villagers (or 999 food and 999 wood) end at x = 114,
+// the clock starts at x = 119 or later, so they never touch.
+static int draw_counter(uint16_t* out, int y0, int x, int id) {
   const uint8_t* ic = GC_ICONS(id);
   for (int r = 0; r < 16; r++) {
     int py = r - y0;
@@ -469,12 +477,19 @@ static void draw_counters(uint16_t* out, int y0) {
     for (int c = 0; c < 16; c++) {
       uint8_t v = GC_RD8(ic + (r >> 1) * 4 + (c >> 2));
       uint8_t p = ((c >> 1) & 1) ? (v & 15) : (v >> 4);
-      if (p) out[py * GC_W + 3 + c] = g_ui[p];
+      if (p) out[py * GC_W + x + c] = g_ui[p];
     }
   }
   char nb[5];
-  put_num(nb, village_stat(HUD_STAT[id]));
-  draw_text(out, y0, 23, 1, nb, g_ui[P_WHITE], 2, 0);
+  int len = put_num(nb, village_stat(HUD_STAT[id]));
+  draw_text(out, y0, x + 18, 1, nb, g_ui[P_WHITE], 2, 0);
+  return x + 18 + len * 12;
+}
+static void draw_counters(uint16_t* out, int y0) {
+  static const uint8_t ORDER[4] = {0, 3, 1, 2};         // icon ids: 0 faith, 1 food, 2 wood, 3 population
+  int pair = (s_hud_alt & 1) * 2;
+  int x = draw_counter(out, y0, 2, ORDER[pair]);
+  draw_counter(out, y0, x + 4, ORDER[pair + 1]);
 }
 
 static void draw_top(uint16_t* out, int y0) {
@@ -483,8 +498,7 @@ static void draw_top(uint16_t* out, int y0) {
   draw_counters(out, y0);
   char t[6] = {'-', '-', ':', '-', '-', 0};
   if (g_clock_valid) { fmt2(t, g_hour); fmt2(t + 3, g_min); }
-  draw_text(out, y0, 80, 1, t, ink, 2, 0);
-  // temperature at the right edge, weather icon left of it
+  // temperature at the right edge, weather icon left of it, the clock right aligned a few pixels left of the icon
   int deg, f;
   char tb[8];
   int len = 0;
@@ -494,7 +508,7 @@ static void draw_top(uint16_t* out, int y0) {
     if (a >= 100) tb[len++] = (char)('0' + a / 100);
     if (a >= 10) tb[len++] = (char)('0' + (a / 10) % 10);
     tb[len++] = (char)('0' + a % 10);
-    tb[len++] = f ? 'F' : 'C';
+    if (len < 3) tb[len++] = f ? 'F' : 'C';          // three characters (-10, 100) leave the unit out so that the clock keeps its room
   } else {
     tb[len++] = '-'; tb[len++] = '-';
   }
@@ -502,6 +516,7 @@ static void draw_top(uint16_t* out, int y0) {
   int tx = GC_W - 4 - len * 12;
   draw_text(out, y0, tx, 1, tb, ink, 2, 0);
   weather_icon(out, y0, tx - 17, 2, world_weather(), ((G.live_flags & GC_WXF_NIGHT) || is_night() || want_bed()) ? 1 : 0);
+  draw_text(out, y0, tx - 17 - 4 - 60, 1, t, ink, 2, 0);
 }
 
 static void draw_band(uint16_t* out, int y0) {
