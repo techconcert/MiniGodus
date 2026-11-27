@@ -87,7 +87,7 @@ def main():
         for r in odd:
             lines.append("  seed %d land %d clim %d: %s day %d peak %d births %d deaths %d" % (r[1], r[2], r[3], r[0], r[4], r[5], r[6], r[7]))
     ok = early == 0 and not running and 30 <= med <= 45 and len(ext) * 100 <= count * 3
-    lines.append("targets (none before day 30, median 30..45, at most 3%% extinct, all finish): %s" % ("met" if ok else "NOT met"))
+    lines.append("targets (no COMPLETED world ends before day 30, median 30..45, at most 3%% of the worlds die out (an extinct world is counted by that rule, not as an early end), all finish): %s" % ("met" if ok else "NOT met"))
     text = "\n".join(lines)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
